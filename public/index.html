@@ -1,0 +1,327 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>PQ Verifiable Archive</title>
+<style>
+  :root {
+    --bg: #0f0f0f;
+    --panel: #161616;
+    --panel-2: #1c1c1c;
+    --border: #2a2a2a;
+    --text: #e6e6e6;
+    --muted: #8a8a8a;
+    --green: #36d399;
+    --red: #f87272;
+    --blue: #5aa9ff;
+    --grey: #6b6b6b;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    line-height: 1.5;
+    padding: 48px 20px;
+  }
+  .wrap { max-width: 880px; margin: 0 auto; }
+  header { margin-bottom: 40px; }
+  h1 {
+    font-size: 28px;
+    margin: 0 0 6px;
+    letter-spacing: -0.5px;
+  }
+  .tagline { color: var(--muted); font-size: 14px; margin: 0; }
+  .zones { display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
+  .zone {
+    flex: 1 1 280px;
+    background: var(--panel);
+    border: 1px dashed var(--border);
+    border-radius: 8px;
+    padding: 24px;
+    transition: border-color 0.15s, background 0.15s;
+    cursor: pointer;
+    position: relative;
+  }
+  .zone:hover, .zone.drag { border-color: var(--blue); background: var(--panel-2); }
+  .zone .label { font-size: 13px; color: var(--muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; }
+  .zone .label .req { color: var(--red); }
+  .zone .label .opt { color: var(--grey); }
+  .zone .hint { font-size: 13px; color: var(--grey); }
+  .zone .filename { font-size: 13px; color: var(--green); word-break: break-all; margin-top: 4px; }
+  .zone input[type=file] { display: none; }
+  .actions { display: flex; align-items: center; gap: 16px; margin-bottom: 8px; }
+  button.verify {
+    background: var(--blue);
+    color: #04122b;
+    border: none;
+    border-radius: 6px;
+    padding: 12px 28px;
+    font-family: var(--mono);
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  button.verify:disabled { opacity: 0.35; cursor: not-allowed; }
+  .spinner {
+    width: 18px; height: 18px;
+    border: 2px solid var(--border);
+    border-top-color: var(--blue);
+    border-radius: 50%;
+    animation: spin 0.7s linear infinite;
+    display: none;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .net-error {
+    display: none;
+    background: rgba(248,114,114,0.1);
+    border: 1px solid var(--red);
+    color: var(--red);
+    padding: 12px 16px;
+    border-radius: 6px;
+    font-size: 13px;
+    margin-top: 16px;
+  }
+  #results { display: none; margin-top: 32px; }
+  .section-title {
+    font-size: 12px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 1.5px;
+    margin: 28px 0 10px;
+  }
+  .step {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 16px;
+    margin-bottom: 8px;
+  }
+  .step.info { opacity: 0.85; }
+  .icon {
+    flex: 0 0 22px;
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    font-size: 13px;
+    font-weight: 700;
+    margin-top: 1px;
+  }
+  .icon.pass { background: rgba(54,211,153,0.15); color: var(--green); }
+  .icon.fail { background: rgba(248,114,114,0.15); color: var(--red); }
+  .icon.info { background: rgba(107,107,107,0.2); color: var(--grey); }
+  .step .body { flex: 1; min-width: 0; }
+  .step .name { font-size: 14px; font-weight: 600; }
+  .step .name .tag {
+    font-size: 10px;
+    color: var(--grey);
+    border: 1px solid var(--grey);
+    border-radius: 3px;
+    padding: 1px 5px;
+    margin-left: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    vertical-align: middle;
+  }
+  .step .detail { font-size: 12.5px; color: var(--muted); word-break: break-all; margin-top: 2px; }
+  .step .detail a { color: var(--blue); text-decoration: none; }
+  .step .detail a:hover { text-decoration: underline; }
+  .signer {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin-bottom: 8px;
+    font-size: 13px;
+  }
+  .signer .sname { font-weight: 600; }
+  .signer .smeta { color: var(--muted); font-size: 12px; }
+  .banner {
+    margin-top: 32px;
+    border-radius: 8px;
+    padding: 24px;
+    text-align: center;
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: 1px;
+  }
+  .banner.valid { background: rgba(54,211,153,0.12); border: 1px solid var(--green); color: var(--green); }
+  .banner.invalid { background: rgba(248,114,114,0.12); border: 1px solid var(--red); color: var(--red); }
+  .banner .sub { display: block; font-size: 13px; font-weight: 400; color: var(--muted); margin-top: 8px; letter-spacing: 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>PQ Verifiable Archive</h1>
+    <p class="tagline">Post-quantum tamper evidence for DocuSign envelopes</p>
+  </header>
+
+  <div class="zones">
+    <label class="zone" id="bundleZone">
+      <div class="label">Proof Bundle (JSON) <span class="req">*</span></div>
+      <div class="hint" data-default>Click or drop a .json bundle</div>
+      <div class="filename" id="bundleName"></div>
+      <input type="file" id="bundleInput" accept=".json,application/json" />
+    </label>
+    <label class="zone" id="pdfZone">
+      <div class="label">Original PDF <span class="opt">(optional)</span></div>
+      <div class="hint" data-default>Click or drop the original .pdf</div>
+      <div class="filename" id="pdfName"></div>
+      <input type="file" id="pdfInput" accept=".pdf,application/pdf" />
+    </label>
+  </div>
+
+  <div class="actions">
+    <button class="verify" id="verifyBtn" disabled>Verify</button>
+    <div class="spinner" id="spinner"></div>
+  </div>
+
+  <div class="net-error" id="netError"></div>
+
+  <div id="results">
+    <div class="section-title">Verification Steps</div>
+    <div id="steps"></div>
+
+    <div id="signersWrap" style="display:none">
+      <div class="section-title">Signers</div>
+      <div id="signers"></div>
+    </div>
+
+    <div class="banner" id="banner"></div>
+  </div>
+</div>
+
+<script>
+  const bundleInput = document.getElementById('bundleInput');
+  const pdfInput = document.getElementById('pdfInput');
+  const bundleName = document.getElementById('bundleName');
+  const pdfName = document.getElementById('pdfName');
+  const verifyBtn = document.getElementById('verifyBtn');
+  const spinner = document.getElementById('spinner');
+  const netError = document.getElementById('netError');
+  const results = document.getElementById('results');
+  const stepsEl = document.getElementById('steps');
+  const signersWrap = document.getElementById('signersWrap');
+  const signersEl = document.getElementById('signers');
+  const banner = document.getElementById('banner');
+
+  function syncState() {
+    const f = bundleInput.files[0];
+    bundleName.textContent = f ? f.name : '';
+    const p = pdfInput.files[0];
+    pdfName.textContent = p ? p.name : '';
+    verifyBtn.disabled = !f;
+  }
+
+  bundleInput.addEventListener('change', syncState);
+  pdfInput.addEventListener('change', syncState);
+
+  function wireDrop(zoneId, input) {
+    const zone = document.getElementById(zoneId);
+    ['dragenter','dragover'].forEach(ev =>
+      zone.addEventListener(ev, e => { e.preventDefault(); zone.classList.add('drag'); }));
+    ['dragleave','drop'].forEach(ev =>
+      zone.addEventListener(ev, e => { e.preventDefault(); zone.classList.remove('drag'); }));
+    zone.addEventListener('drop', e => {
+      if (e.dataTransfer.files.length) { input.files = e.dataTransfer.files; syncState(); }
+    });
+  }
+  wireDrop('bundleZone', bundleInput);
+  wireDrop('pdfZone', pdfInput);
+
+  function esc(s) {
+    return String(s).replace(/[&<>"']/g, c =>
+      ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+  }
+
+  function explorerLink(detail) {
+    // Step 4 detail looks like "<txId> (round N)"; link the txId.
+    const m = detail.match(/^([A-Z0-9]{20,})\s*(.*)$/);
+    if (!m) return esc(detail);
+    const txId = m[1];
+    return '<a href="https://explorer.perawallet.app/tx/' + esc(txId) +
+      '" target="_blank" rel="noopener">' + esc(txId) + '</a> ' + esc(m[2]);
+  }
+
+  function renderSteps(steps) {
+    stepsEl.innerHTML = '';
+    for (const s of steps) {
+      const isInfo = s.name === 'State Proof';
+      const row = document.createElement('div');
+      row.className = 'step' + (isInfo ? ' info' : '');
+      const iconClass = isInfo ? 'info' : (s.passed ? 'pass' : 'fail');
+      const iconChar = isInfo ? 'i' : (s.passed ? '✓' : '✗');
+      const tag = isInfo ? '<span class="tag">Informational</span>' : '';
+      const detailHtml = s.name === 'Algorand Anchor' && s.passed
+        ? explorerLink(s.detail) : esc(s.detail);
+      row.innerHTML =
+        '<div class="icon ' + iconClass + '">' + iconChar + '</div>' +
+        '<div class="body"><div class="name">' + esc(s.name) + tag + '</div>' +
+        '<div class="detail">' + detailHtml + '</div></div>';
+      stepsEl.appendChild(row);
+    }
+  }
+
+  function renderSigners(signers) {
+    if (!signers || !signers.length) { signersWrap.style.display = 'none'; return; }
+    signersWrap.style.display = 'block';
+    signersEl.innerHTML = '';
+    for (const s of signers) {
+      const el = document.createElement('div');
+      el.className = 'signer';
+      el.innerHTML =
+        '<div class="sname">' + esc(s.name) + '</div>' +
+        '<div class="smeta">' + esc(s.email) + ' — signed ' + esc(s.signedAt) + '</div>';
+      signersEl.appendChild(el);
+    }
+  }
+
+  function renderBanner(valid) {
+    banner.className = 'banner ' + (valid ? 'valid' : 'invalid');
+    banner.innerHTML = valid
+      ? 'VALID ✓<span class="sub">On-chain record confirmed. DocuSign attestation verified offline.</span>'
+      : 'INVALID ✗<span class="sub">One or more verification checks failed.</span>';
+  }
+
+  verifyBtn.addEventListener('click', async () => {
+    netError.style.display = 'none';
+    results.style.display = 'none';
+    verifyBtn.disabled = true;
+    spinner.style.display = 'block';
+
+    const fd = new FormData();
+    fd.append('bundle', bundleInput.files[0]);
+    if (pdfInput.files[0]) fd.append('pdf', pdfInput.files[0]);
+
+    try {
+      const res = await fetch('/api/verify', { method: 'POST', body: fd });
+      const data = await res.json();
+      if (data.error && (!data.steps || !data.steps.length)) {
+        netError.textContent = 'Verification error: ' + data.error;
+        netError.style.display = 'block';
+        return;
+      }
+      renderSteps(data.steps || []);
+      renderSigners(data.signers || []);
+      renderBanner(!!data.valid);
+      results.style.display = 'block';
+    } catch (err) {
+      netError.textContent = 'Network error: ' + err.message;
+      netError.style.display = 'block';
+    } finally {
+      spinner.style.display = 'none';
+      verifyBtn.disabled = !bundleInput.files[0];
+    }
+  });
+</script>
+</body>
+</html>
