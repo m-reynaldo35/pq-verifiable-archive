@@ -16,6 +16,7 @@
     --red: #f87272;
     --blue: #5aa9ff;
     --grey: #6b6b6b;
+    --amber: #f5c451;
     --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
   }
   * { box-sizing: border-box; }
@@ -118,8 +119,12 @@
   .icon.pass { background: rgba(54,211,153,0.15); color: var(--green); }
   .icon.fail { background: rgba(248,114,114,0.15); color: var(--red); }
   .icon.info { background: rgba(107,107,107,0.2); color: var(--grey); }
+  .icon.skip { background: rgba(245,196,81,0.15); color: var(--amber); }
+  .icon.error { background: rgba(245,196,81,0.18); color: var(--amber); }
   .step .body { flex: 1; min-width: 0; }
   .step .name { font-size: 14px; font-weight: 600; }
+  .step .subname { font-size: 12px; color: var(--muted); margin-top: 1px; }
+  .step.skip .detail { color: var(--amber); }
   .step .name .tag {
     font-size: 10px;
     color: var(--grey);
@@ -155,6 +160,19 @@
   }
   .banner.valid { background: rgba(54,211,153,0.12); border: 1px solid var(--green); color: var(--green); }
   .banner.invalid { background: rgba(248,114,114,0.12); border: 1px solid var(--red); color: var(--red); }
+  .banner.warn { background: rgba(245,196,81,0.12); border: 1px solid var(--amber); color: var(--amber); }
+  button.demo {
+    background: transparent;
+    color: var(--blue);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 16px;
+    font-family: var(--mono);
+    font-size: 13px;
+    cursor: pointer;
+    transition: border-color 0.15s;
+  }
+  button.demo:hover { border-color: var(--blue); }
   .banner .sub { display: block; font-size: 13px; font-weight: 400; color: var(--muted); margin-top: 8px; letter-spacing: 0; }
 </style>
 </head>
@@ -164,6 +182,10 @@
     <h1>PQ Verifiable Archive</h1>
     <p class="tagline">Post-quantum tamper evidence for DocuSign envelopes</p>
   </header>
+
+  <div style="margin-bottom: 16px;">
+    <button class="demo" id="demoBtn">Try demo</button>
+  </div>
 
   <div class="zones">
     <label class="zone" id="bundleZone">
@@ -201,6 +223,10 @@
 </div>
 
 <script>
+  ['dragover', 'drop'].forEach(ev =>
+    document.addEventListener(ev, e => e.preventDefault())
+  );
+
   const bundleInput = document.getElementById('bundleInput');
   const pdfInput = document.getElementById('pdfInput');
   const bundleName = document.getElementById('bundleName');
@@ -246,6 +272,28 @@
   wireDrop('bundleZone', f => { bundleFile = f; });
   wireDrop('pdfZone', f => { pdfFile = f; });
 
+  const demoBtn = document.getElementById('demoBtn');
+  demoBtn.addEventListener('click', async () => {
+    netError.style.display = 'none';
+    demoBtn.disabled = true;
+    try {
+      const [bundleRes, pdfRes] = await Promise.all([
+        fetch('/demo/bundle'),
+        fetch('/demo/pdf'),
+      ]);
+      if (!bundleRes.ok || !pdfRes.ok) throw new Error('demo files unavailable');
+      const [bundleBlob, pdfBlob] = await Promise.all([bundleRes.blob(), pdfRes.blob()]);
+      bundleFile = new File([bundleBlob], 'sample-contract-bundle.json', { type: 'application/json' });
+      pdfFile = new File([pdfBlob], 'sample-contract.pdf', { type: 'application/pdf' });
+      syncState();
+    } catch (err) {
+      netError.textContent = 'Could not load demo documents: ' + err.message;
+      netError.style.display = 'block';
+    } finally {
+      demoBtn.disabled = false;
+    }
+  });
+
   function esc(s) {
     return String(s).replace(/[&<>"']/g, c =>
       ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
@@ -260,20 +308,41 @@
       '" target="_blank" rel="noopener">' + esc(txId) + '</a> ' + esc(m[2]);
   }
 
+  const STEP_SUBTITLES = {
+    'ML-DSA-65 Signature': 'Receipt authenticity (quantum-safe signature)',
+    'PDF Hash': 'Document fingerprint match',
+    'Merkle Inclusion': 'Document is in the sealed batch',
+    'Algorand Anchor': 'Public ledger record confirmed',
+    'State Proof': 'Quantum-safe network attestation (~17 min after anchoring)',
+  };
+
   function renderSteps(steps) {
     stepsEl.innerHTML = '';
     for (const s of steps) {
       const isInfo = s.name === 'State Proof';
       const row = document.createElement('div');
-      row.className = 'step' + (isInfo ? ' info' : '');
-      const iconClass = isInfo ? 'info' : (s.passed ? 'pass' : 'fail');
-      const iconChar = isInfo ? 'i' : (s.passed ? '✓' : '✗');
+      let iconClass, iconChar, stateClass;
+      if (isInfo) {
+        iconClass = 'info'; iconChar = 'i'; stateClass = ' info';
+      } else if (s.skipped) {
+        iconClass = 'skip'; iconChar = '–'; stateClass = ' skip';
+      } else if (s.error) {
+        iconClass = 'error'; iconChar = '!'; stateClass = '';
+      } else if (s.passed) {
+        iconClass = 'pass'; iconChar = '✓'; stateClass = '';
+      } else {
+        iconClass = 'fail'; iconChar = '✗'; stateClass = '';
+      }
+      row.className = 'step' + stateClass;
       const tag = isInfo ? '<span class="tag">Informational</span>' : '';
+      const subtitle = STEP_SUBTITLES[s.name]
+        ? '<div class="subname">' + esc(STEP_SUBTITLES[s.name]) + '</div>' : '';
       const detailHtml = s.name === 'Algorand Anchor' && s.passed
         ? explorerLink(s.detail) : esc(s.detail);
       row.innerHTML =
         '<div class="icon ' + iconClass + '">' + iconChar + '</div>' +
         '<div class="body"><div class="name">' + esc(s.name) + tag + '</div>' +
+        subtitle +
         '<div class="detail">' + detailHtml + '</div></div>';
       stepsEl.appendChild(row);
     }
@@ -293,11 +362,22 @@
     }
   }
 
-  function renderBanner(valid) {
-    banner.className = 'banner ' + (valid ? 'valid' : 'invalid');
-    banner.innerHTML = valid
-      ? 'VALID ✓<span class="sub">On-chain record confirmed. DocuSign attestation verified offline.</span>'
-      : 'INVALID ✗<span class="sub">One or more verification checks failed.</span>';
+  function renderBanner(valid, hasSkipped, operationalError) {
+    if (valid) {
+      banner.className = 'banner valid';
+      const sub = hasSkipped
+        ? 'Original document not verified — upload the PDF to complete verification'
+        : 'On-chain record confirmed. DocuSign attestation verified offline.';
+      banner.innerHTML = 'VALID ✓ — record confirmed<span class="sub">' + sub + '</span>';
+      return;
+    }
+    if (operationalError) {
+      banner.className = 'banner warn';
+      banner.innerHTML = 'COULD NOT VERIFY<span class="sub">Network or configuration error — try again or check the server.</span>';
+      return;
+    }
+    banner.className = 'banner invalid';
+    banner.innerHTML = 'INVALID ✗<span class="sub">One or more verification checks failed.</span>';
   }
 
   verifyBtn.addEventListener('click', async () => {
@@ -318,9 +398,13 @@
         netError.style.display = 'block';
         return;
       }
-      renderSteps(data.steps || []);
+      const steps = data.steps || [];
+      const hasSkipped = steps.some(s => s.skipped);
+      const failing = steps.filter(s => s.name !== 'State Proof' && !s.passed);
+      const operationalError = failing.length > 0 && failing.every(s => s.error);
+      renderSteps(steps);
       renderSigners(data.signers || []);
-      renderBanner(!!data.valid);
+      renderBanner(!!data.valid, hasSkipped, operationalError);
       results.style.display = 'block';
     } catch (err) {
       netError.textContent = 'Network error: ' + err.message;

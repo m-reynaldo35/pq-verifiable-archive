@@ -15,9 +15,10 @@ async function main() {
   const merkleRoot = getMerkleRoot(tree);
   console.log('Anchoring to Algorand...');
 
-  const { txId, confirmedRound } = await anchorToAlgorand(merkleRoot, ['sample-contract']);
+  const { txId, confirmedRound, blockTime } = await anchorToAlgorand(merkleRoot, ['sample-contract']);
   console.log('txId:', txId);
   console.log('confirmedRound:', confirmedRound);
+  console.log('blockTime:', blockTime);
 
   const stateProof: StateProofData = {
     stateProofRound: Math.ceil(confirmedRound / 256) * 256,
@@ -31,6 +32,7 @@ async function main() {
     confirmedRound,
     merkleTree: tree,
     stateProof,
+    anchorTime: blockTime,
   });
 
   await saveBundleToFile(bundle, 'bundles/sample-contract-bundle.json');

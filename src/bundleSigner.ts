@@ -51,8 +51,12 @@ export function signBundle(bundle: Omit<ProofBundle, 'signature'>): ProofBundle 
   return { ...bundle, signature: Buffer.from(signature).toString('hex') };
 }
 
+export function getPublicKeyBytes(): Uint8Array {
+  return requireEnvHex('DOCUSIGN_MLDSA_PUBLIC_KEY');
+}
+
 export function verifyBundleSignature(bundle: ProofBundle): boolean {
-  const publicKey = requireEnvHex('DOCUSIGN_MLDSA_PUBLIC_KEY');
+  const publicKey = getPublicKeyBytes();
   const { signature, ...unsigned } = bundle;
   const message = canonicalBytes(unsigned);
   const sigBytes = Uint8Array.from(Buffer.from(signature, 'hex'));

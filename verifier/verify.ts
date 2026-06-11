@@ -51,6 +51,10 @@ async function main() {
   for (const step of result.steps) {
     if (step.name === 'State Proof') {
       console.log(`  state proof coverage: ${step.detail}`);
+    } else if (step.skipped) {
+      console.log(`– ${step.name}: ${step.detail}`);
+    } else if (step.error) {
+      console.error(`! ${step.name}: ${step.detail}`);
     } else if (step.passed) {
       console.log(`✓ ${step.name}: ${step.detail}`);
     } else {
@@ -70,6 +74,11 @@ async function main() {
     console.log(`        Document integrity proven as of ${bundle.blockTimestamp}.`);
     console.log('        AlgoNode confirms on-chain record. DocuSign attestation verified offline.');
     process.exit(EXIT_VALID);
+  }
+
+  if (result.operationalError) {
+    console.error('\nCOULD NOT VERIFY — network or configuration error');
+    process.exit(EXIT_ERROR);
   }
 
   console.error('\nINVALID ✗');

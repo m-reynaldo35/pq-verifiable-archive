@@ -2,11 +2,40 @@ import algosdk from 'algosdk';
 import { createHash } from 'crypto';
 
 const DEFAULT_NODE_URL = 'https://mainnet-api.algonode.cloud';
+const DEFAULT_INDEXER_URL = 'https://mainnet-idx.algonode.cloud';
 const NOTE_LIMIT_BYTES = 1024;
 
 export interface AnchorResult {
   txId: string;
   confirmedRound: number;
+  blockTime: string;
+}
+
+async function fetchBlockTime(txId: string): Promise<string> {
+  const indexerUrl = process.env.ALGORAND_INDEXER_URL || DEFAULT_INDEXER_URL;
+  const res = await fetch(`${indexerUrl}/v2/transactions/${txId}`);
+  if (!res.ok) {
+    throw new Error(`indexer transaction lookup failed: ${res.status} ${res.statusText}`);
+  }
+  const body = (await res.json()) as { transaction?: { 'round-time'?: number } };
+  const roundTime = body.transaction?.['round-time'];
+  if (typeof roundTime !== 'number') {
+    throw new Error(`indexer response for ${txId} has no round-time`);
+  }
+  return new Date(roundTime * 1000).toISOString();
+}
+
+// The indexer can lag a couple of rounds behind algod; retry briefly before
+// falling back to the local clock.
+async function fetchBlockTimeWithRetry(txId: string): Promise<string> {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    try {
+      return await fetchBlockTime(txId);
+    } catch {
+      await new Promise(resolve => setTimeout(resolve, 1500));
+    }
+  }
+  return new Date().toISOString();
 }
 
 function envelopeIdsDigest(envelopeIds: string[]): string {
@@ -55,5 +84,7 @@ export async function anchorToAlgorand(
   const result = await algosdk.waitForConfirmation(algod, txid, 4);
   const confirmedRound = Number(result.confirmedRound);
 
-  return { txId: txid, confirmedRound };
+  const blockTime = await fetchBlockTimeWithRetry(txid);
+
+  return { txId: txid, confirmedRound, blockTime };
 }

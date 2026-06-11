@@ -35,7 +35,7 @@ Generate the demo contract and verify a bundle:
 
 ```bash
 npx tsx scripts/generate-sample-pdf.ts        # writes assets/sample-contract.pdf
-npm run verify -- --bundle bundles/test-bundle.json --pdf assets/sample-contract.pdf
+npm run verify -- --bundle bundles/sample-contract-bundle.json --pdf assets/sample-contract.pdf
 ```
 
 Required environment variables (see `.env.example`): `ALGORAND_NODE_URL`,
@@ -101,4 +101,4 @@ The full schema and field descriptions are in [`docs/architecture.md`](docs/arch
 - [`docs/pitch.md`](docs/pitch.md) — executive 1-pager
 - [`docs/architecture.md`](docs/architecture.md) — data flow, bundle schema, verification
 - [`docs/compliance-faq.md`](docs/compliance-faq.md) — legal / GRC Q&A
-- [`ROADMAP.md`](ROADMAP.md) — phased build plan (Phases 0–4 complete)
+- [`ROADMAP.md`](ROADMAP.md) — phased build plan (Phases 0–5 complete)

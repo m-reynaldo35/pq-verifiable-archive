@@ -21,6 +21,9 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
+app.get('/demo/bundle', (_req, res) => res.sendFile(path.resolve('bundles/sample-contract-bundle.json')));
+app.get('/demo/pdf', (_req, res) => res.sendFile(path.resolve('assets/sample-contract.pdf')));
+
 app.post(
   '/api/verify',
   upload.fields([
@@ -36,12 +39,10 @@ app.post(
     }
 
     const raw = bundleFile.buffer.toString('utf8');
-    process.stderr.write(`[verify] bundle size=${bundleFile.size} buflen=${bundleFile.buffer.length} mimetype=${bundleFile.mimetype} first80=${JSON.stringify(raw.slice(0, 80))}\n`);
     let bundle: ProofBundle;
     try {
       bundle = JSON.parse(raw) as ProofBundle;
-    } catch (e) {
-      process.stderr.write(`[verify] JSON.parse error: ${(e as Error).message}\n`);
+    } catch {
       res.status(400).json({ valid: false, steps: [], signers: [], error: 'bundle is not valid JSON' });
       return;
     }
@@ -57,6 +58,15 @@ app.post(
     }
   },
 );
+
+app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  const message = err.message.includes('File too large') ? 'file too large (max 25 MB)' : err.message;
+  res.status(400).json({ valid: false, steps: [], signers: [], error: message });
+});
+
+if (!process.env.DOCUSIGN_HMAC_KEY) {
+  process.stderr.write('warn: DOCUSIGN_HMAC_KEY not set — all webhook requests will be rejected\n');
+}
 
 app.listen(PORT, () => {
   console.log(`PQ Verifiable Archive bridge listening on :${PORT}`);

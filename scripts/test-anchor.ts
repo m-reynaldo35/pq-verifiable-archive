@@ -18,9 +18,10 @@ async function main() {
   console.log('\nMerkle root:', merkleRoot);
 
   console.log('\nAnchoring to Algorand...');
-  const { txId, confirmedRound } = await anchorToAlgorand(merkleRoot, envelopeIds);
+  const { txId, confirmedRound, blockTime } = await anchorToAlgorand(merkleRoot, envelopeIds);
   console.log('  txId:', txId);
   console.log('  confirmedRound:', confirmedRound);
+  console.log('  blockTime:', blockTime);
 
   // State proof is not yet generated at anchor time; record the covering round.
   const placeholderStateProof: StateProofData = {
@@ -35,6 +36,7 @@ async function main() {
     confirmedRound,
     merkleTree: tree,
     stateProof: placeholderStateProof,
+    anchorTime: blockTime,
   });
 
   const outputPath = 'bundles/test-bundle.json';

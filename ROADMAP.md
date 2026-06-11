@@ -125,26 +125,26 @@ No architectural changes required.
 **Goal:** Given a PDF, hash it and anchor the Merkle root + signer metadata on Algorand testnet.
 
 ### 1.1 — Document Hasher (`src/documentHasher.ts`)
-- [ ] `hashPdf(pdfBuffer: Buffer): string` — returns `sha256:<hex>`
-- [ ] Never write PDF to disk; operate on buffer only
-- [ ] Unit test: same PDF → same hash; 1-byte change → different hash
+- [x] `hashPdf(pdfBuffer: Buffer): string` — returns `sha256:<hex>`
+- [x] Never write PDF to disk; operate on buffer only
+- [x] Unit test: same PDF → same hash; 1-byte change → different hash
 
 ### 1.2 — Merkle Batcher (`src/merkleBatcher.ts`)
-- [ ] Accumulate `{ envelopeId, leafHash, signingMetadata }` entries
-- [ ] On flush: build Merkle tree with `merkletreejs`
-- [ ] Return: `{ merkleRoot, leaves: [{ envelopeId, leafHash, merkleProof, signingMetadata }], batchId }`
+- [x] Accumulate `{ envelopeId, leafHash, signingMetadata }` entries
+- [x] On flush: build Merkle tree with `merkletreejs`
+- [x] Return: `{ merkleRoot, leaves: [{ envelopeId, leafHash, merkleProof, signingMetadata }], batchId }`
 
 ### 1.3 — Algorand Anchor (`src/algorandAnchor.ts`)
-- [ ] Build note payload:
+- [x] Build note payload:
       `{ protocol:"pqva/1", merkleRoot, batchId, count, signers:[{passkeyPublicKey, passkeySignature}] }`
-- [ ] Assert note ≤ 1024 bytes; hash signingMetadata if over limit
-- [ ] Submit 0-ALGO payment txn to testnet via algosdk
-- [ ] Return `{ txnId, confirmedRound }`
+- [x] Assert note ≤ 1024 bytes; hash signingMetadata if over limit
+- [x] Submit 0-ALGO payment txn to testnet via algosdk
+- [x] Return `{ txnId, confirmedRound }`
 
 ### 1.4 — ML-DSA Bundle Signer (`src/bundleSigner.ts`)
-- [ ] Load DocuSign ML-DSA private key from env
-- [ ] `signBundle(bundle): string` — returns ML-DSA signature over canonical bundle bytes
-- [ ] `verifyBundle(bundle, signature, publicKey): boolean`
+- [x] Load DocuSign ML-DSA private key from env
+- [x] `signBundle(bundle): string` — returns ML-DSA signature over canonical bundle bytes
+- [x] `verifyBundle(bundle, signature, publicKey): boolean`
 
 **Acceptance:** `scripts/test-anchor.ts` with 3 sample PDFs → one testnet txn whose
 note contains the Merkle root and signer metadata, visible at testnet.explorer.perawallet.app.
@@ -156,15 +156,15 @@ note contains the Merkle root and signer metadata, visible at testnet.explorer.p
 all data needed for the auditor.
 
 ### 2.1 — State Proof Fetcher (`src/stateProofCollector.ts`)
-- [ ] Accept `{ txnId, confirmedRound }`
-- [ ] Calculate state proof round: `Math.ceil(confirmedRound / 256) * 256`
-- [ ] Poll `GET /v2/stateproofs/{stateProofRound}` until available (retry 2 min, timeout 25 min)
-- [ ] Return `{ stateProofRound, blockTimestamp }`
+- [x] Accept `{ txnId, confirmedRound }`
+- [x] Calculate state proof round: `Math.ceil(confirmedRound / 256) * 256`
+- [x] Poll `GET /v2/stateproofs/{stateProofRound}` until available (retry 2 min, timeout 25 min)
+- [x] Return `{ stateProofRound, blockTimestamp }`
 
 ### 2.2 — Proof Bundle Assembler (`src/proofBundleAssembler.ts`)
-- [ ] Combine all fields into proof bundle schema (see above)
-- [ ] Sign bundle with DocuSign ML-DSA key
-- [ ] Write to `bundles/bundle-{envelopeId}.json`
+- [x] Combine all fields into proof bundle schema (see above)
+- [x] Sign bundle with DocuSign ML-DSA key
+- [x] Write to `bundles/bundle-{envelopeId}.json`
 
 **Acceptance:** A saved bundle for each test envelope containing all fields needed
 for the auditor — no field requires a DocuSign server to interpret.
@@ -177,14 +177,14 @@ for the auditor — no field requires a DocuSign server to interpret.
 ### `verifier/verify.ts` — CLI using `commander`
 
 ```
-Usage: verify <pdf-path> <bundle-path>
+Usage: npx tsx verifier/verify.ts --bundle <path> [--pdf <path>]
 ```
 
-- [ ] Step 1 — Hash match: `SHA-256(pdfBytes) === bundle.pdfHash`
-- [ ] Step 2 — Merkle inclusion: walk `bundle.merkleProof` from leaf to `bundle.merkleRoot`
-- [ ] Step 3 — AlgoNode txn lookup: confirm note contains `bundle.merkleRoot` and signer metadata
-- [ ] Step 4 — State proof confirmation: confirm `bundle.stateProofRound` exists on AlgoNode
-- [ ] Step 5 — ML-DSA verify: `mlDsa65.verify(bundle.docusignMLDSASignature, bundleBytes, docusignPublicKey)`
+- [x] Step 1 — Hash match: `SHA-256(pdfBytes) === bundle.pdfHash`
+- [x] Step 2 — Merkle inclusion: walk `bundle.merkleProof` from leaf to `bundle.merkleRoot`
+- [x] Step 3 — AlgoNode txn lookup: confirm note contains `bundle.merkleRoot` and signer metadata
+- [x] Step 4 — State proof confirmation: confirm `bundle.stateProofRound` exists on AlgoNode
+- [x] Step 5 — ML-DSA verify: `mlDsa65.verify(bundle.docusignMLDSASignature, bundleBytes, docusignPublicKey)`
 
 **Output on success:**
 ```
@@ -210,17 +210,17 @@ VALID — document integrity proven as of 2026-06-11T09:00:00Z
 **Goal:** Real webhook so the flow triggers automatically on envelope completion.
 
 ### 4.1 — Webhook Handler (`src/webhookHandler.ts`)
-- [ ] `POST /webhook/docusign`
-- [ ] Validate `X-DocuSign-Signature-1` HMAC-SHA256 (reject + 400 if invalid)
-- [ ] On `status === "completed"`: fetch combined PDF from DocuSign API
-- [ ] Extract signer passkey metadata from envelope data
-- [ ] Pass to Merkle Batcher queue
-- [ ] Respond 200 immediately
+- [x] `POST /webhook/docusign`
+- [x] Validate `X-DocuSign-Signature-1` HMAC-SHA256 (reject + 400 if invalid)
+- [x] On `status === "completed"`: fetch combined PDF from DocuSign API
+- [x] Extract signer passkey metadata from envelope data
+- [x] Pass to Merkle Batcher queue
+- [x] Respond 200 immediately
 
 ### 4.2 — DocuSign API Client (`src/docusignClient.ts`)
-- [ ] OAuth 2.0 token exchange (sandbox)
-- [ ] `downloadEnvelopePdf(envelopeId): Promise<Buffer>`
-- [ ] `getSignerMetadata(envelopeId): Promise<SignerMetadata[]>`
+- [x] OAuth 2.0 token exchange (sandbox)
+- [x] `downloadEnvelopePdf(envelopeId): Promise<Buffer>`
+- [x] `getSignerMetadata(envelopeId): Promise<SignerMetadata[]>`
 
 **Acceptance:** `npm run e2e` sends envelope → webhook fires → bundle generated → verifier VALID.
 
@@ -228,11 +228,11 @@ VALID — document integrity proven as of 2026-06-11T09:00:00Z
 
 ## Phase 5 — Pitch Materials
 
-- [ ] `docs/pitch.md` — 1-pager: the problem, the solution, build vs. borrow
-- [ ] `docs/compliance-faq.md` — pre-empt legal/compliance questions
-- [ ] `docs/architecture.md` — data flow, proof bundle schema
-- [ ] `assets/sample-contract.pdf` — generic sample for demo
-- [ ] README comparison table
+- [x] `docs/pitch.md` — 1-pager: the problem, the solution, build vs. borrow
+- [x] `docs/compliance-faq.md` — pre-empt legal/compliance questions
+- [x] `docs/architecture.md` — data flow, proof bundle schema
+- [x] `assets/sample-contract.pdf` — generic sample for demo
+- [x] README comparison table
 
 ---
 

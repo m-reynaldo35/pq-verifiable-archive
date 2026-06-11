@@ -14,6 +14,7 @@ export interface AssembleParams {
   stateProof: StateProofData;
   batchId?: string;
   blockTimestamp?: string;
+  anchorTime?: string;
   signers?: SignerMetadata[];
   docusignSigners?: DocuSignSigner[];
 }
@@ -32,7 +33,7 @@ export function assembleBundle(params: AssembleParams): ProofBundle {
     merkleProof,
     algorandTxnId: params.txId,
     algorandRound: params.confirmedRound,
-    blockTimestamp: params.blockTimestamp ?? new Date().toISOString(),
+    blockTimestamp: params.anchorTime ?? params.blockTimestamp ?? new Date().toISOString(),
     stateProofRound: params.stateProof.stateProofRound,
     signingMetadata: { signers: params.signers ?? [] },
     docusignSigners: params.docusignSigners ?? [],

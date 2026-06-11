@@ -10,7 +10,11 @@ function stripHexPrefix(hex: string): string {
 }
 
 function leafBuffer(hash: string): Buffer {
-  return Buffer.from(stripHexPrefix(hash), 'hex');
+  const hex = stripHexPrefix(hash);
+  if (!/^[0-9a-fA-F]{64}$/.test(hex)) {
+    throw new Error('invalid document hash: expected 64-char hex string');
+  }
+  return Buffer.from(hex, 'hex');
 }
 
 export function buildMerkleTree(hashes: string[]): MerkleTree {

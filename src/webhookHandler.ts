@@ -56,7 +56,7 @@ async function processEnvelope(envelopeId: string, testPdfBase64?: string): Prom
   const tree = buildMerkleTree([documentHash]);
   const merkleRoot = getMerkleRoot(tree);
 
-  const { txId, confirmedRound } = await anchorToAlgorand(merkleRoot, [envelopeId]);
+  const { txId, confirmedRound, blockTime } = await anchorToAlgorand(merkleRoot, [envelopeId]);
 
   // State proof is not yet generated at anchor time; record the covering round.
   const stateProof: StateProofData = {
@@ -71,6 +71,7 @@ async function processEnvelope(envelopeId: string, testPdfBase64?: string): Prom
     confirmedRound,
     merkleTree: tree,
     stateProof,
+    anchorTime: blockTime,
     signers: [],
     docusignSigners,
   });
