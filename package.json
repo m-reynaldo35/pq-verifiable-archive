@@ -1,0 +1,40 @@
+{
+  "name": "docutestproject",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs"
+  },
+  "scripts": {
+    "generate-wallet": "tsx scripts/generate-wallet.ts",
+    "register-key": "tsx scripts/register-key.ts",
+    "test-anchor": "tsx scripts/test-anchor.ts",
+    "verify": "tsx verifier/verify.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/m-reynaldo35/docutestproject.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/m-reynaldo35/docutestproject/issues"
+  },
+  "homepage": "https://github.com/m-reynaldo35/docutestproject#readme",
+  "dependencies": {
+    "@noble/post-quantum": "^0.6.1",
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.9.3",
+    "algosdk": "^3.6.0",
+    "commander": "^15.0.0",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "merkletreejs": "^0.6.0",
+    "qrcode": "^1.5.4",
+    "tsx": "^4.22.4",
+    "typescript": "^6.0.3"
+  }
+}

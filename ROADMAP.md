@@ -1,173 +1,278 @@
-# AuraSign Pilot — Project Roadmap
+# PQ Verifiable Archive — Project Roadmap
 
-**Goal:** Build a working MVP pilot to demonstrate blockchain-enhanced e-signatures to DocuSign.
-The core pitch: DocuSign handles identity, KYC/AML, and the signing UX (unchanged).
-AuraSign adds a cryptographic attestation layer on top — immutable notarization, automated escrow
-settlement, and a quantum-resistant downloadable receipt.
+**Goal:** Build a working proof-of-concept that demonstrates a post-quantum, vendor-independent
+tamper-evidence layer for DocuSign envelopes — suitable for internal pitch to DocuSign
+product/security leadership.
 
-**Target:** A live, testnet demo that shows one complete deal flow end-to-end.
+**The pitch in one sentence:** DocuSign anchors Merkle roots of envelope hashes to Algorand
+(hashes only — no documents, no PII on-chain), embeds signer passkey metadata in the anchor
+transaction so Algorand's native Falcon state proofs quantum-resistantly cover who signed and
+when, and ships an offline verifier so any party can prove envelope integrity decades from now
+without trusting DocuSign's servers or any live infrastructure.
+
+**Why now:** DocuSign is in early PQC research with nothing shipped. NIST finalised ML-DSA
+(FIPS-204) in 2024. CNSA 2.0 mandates PQC migration in federal/regulated procurement by
+~2030–2035. The window to propose this is open.
+
+---
+
+## What This Is NOT
+
+- Not a replacement for DocuSign's signing UX or identity layer
+- Not a USDC escrow or payment product
+- Not "blockchain for e-signatures" — only hashes and signing metadata touch the chain
+- Not claiming e-signatures themselves become quantum-proof — only the long-term archive anchor
+
+---
+
+## Architecture Overview
+
+```
+DocuSign Connect Webhook
+        │
+        ▼
+  Webhook Handler          ← validates HMAC-SHA256, downloads completed PDF
+        │
+        ▼
+  Document Hasher          ← SHA-256(PDF bytes), never stores document
+        │
+        ▼
+  Merkle Batcher           ← collects N hashes per interval, builds Merkle tree
+        │
+        ▼
+  Algorand Anchor          ← posts merkleRoot + signer passkey metadata in txn note
+        │
+        ▼
+  Algorand Network         ← Falcon state proofs cover the transaction automatically
+        │
+        ▼
+  Proof Bundle Assembler   ← JSON per envelope: hash + merkle proof + txn + ML-DSA sig
+        │
+        ▼
+  Offline Verifier CLI     ← given PDF + bundle: outputs VALID/INVALID
+                              steps 1-2 fully offline
+                              steps 3-4 via AlgoNode public API (not DocuSign)
+                              step 5 fully offline
+```
+
+**Proof bundle schema (v1):**
+```json
+{
+  "protocol": "pqva/1",
+  "envelopeId": "...",
+  "pdfHash": "sha256:...",
+  "batchId": "...",
+  "merkleRoot": "...",
+  "merkleProof": ["sibling_hash_0", "sibling_hash_1"],
+  "algorandTxnId": "...",
+  "algorandRound": 12345678,
+  "blockTimestamp": "2026-06-11T09:00:00Z",
+  "stateProofRound": 12345952,
+  "signingMetadata": {
+    "signers": [
+      { "passkeyPublicKey": "...", "passkeySignature": "..." }
+    ]
+  },
+  "docusignKeyRegistrationTxnId": "...",
+  "docusignMLDSASignature": "..."
+}
+```
+
+**DocuSign institutional key:** ML-DSA (FIPS-204) — fully standardised, NIST approved.
+Registered once in an Algorand transaction. Signs every proof bundle.
+
+**Signer identity:** Passkey public key + signature embedded in Algorand anchor note.
+Algorand's Falcon state proofs cover the note content — quantum-resistant record of who
+signed and when. When FIDO PQC ships, passkeys upgrade to ML-DSA automatically.
+No architectural changes required.
+
+---
+
+## Verification Steps
+
+| Step | What | Offline? |
+|------|------|----------|
+| 1 | SHA-256(PDF) matches bundle.pdfHash | Yes |
+| 2 | merkleProof walks from pdfHash to merkleRoot | Yes |
+| 3 | AlgoNode confirms txn note contains merkleRoot | AlgoNode only — not DocuSign |
+| 4 | AlgoNode confirms signer metadata in that txn | AlgoNode only — not DocuSign |
+| 5 | ML-DSA signature over bundle verifies against registered DocuSign key | Yes |
 
 ---
 
 ## Phase 0 — Project Setup
 **Status:** Complete
 
-- [x] Create project directory `docutestproject/`
-- [x] Initialize git + push to GitHub (`m-reynaldo35/docutestproject`)
-- [ ] Scaffold directory structure (contracts, src, scripts)
-- [ ] Install dependencies (algosdk, tealscript, typescript, dotenv)
-- [ ] Configure `.env` with testnet AlgoNode endpoints
-- [ ] Generate two testnet Algorand accounts and fund via faucet
-- [ ] Acquire testnet USDC (ASA `10458941`) for escrow testing
+- [x] Create project directory
+- [x] Initialise git
+- [x] Scaffold: `src/`, `scripts/`, `verifier/`, `bundles/`, `docs/`, `assets/`
+- [x] `npm init`, install dependencies:
+      `algosdk`, `@noble/post-quantum`, `typescript`, `dotenv`,
+      `express`, `merkletreejs`, `commander`, `tsx`, `@types/node`, `qrcode`
+- [x] `tsconfig.json`
+- [x] `.env` with all required vars (not committed — see `.env.example`)
+- [x] `.env.example` and `.gitignore`
+- [x] Anchor wallet generated — funded with 10 ALGO on mainnet
+      Address: `SM26BRE7UJ42QN2IXUHO3BXQE5YUYVDOJHB5VXQ3GJPQXR5NYC2DZEOEIE`
+- [x] ML-DSA-65 key registered on Algorand mainnet
+      Txn: `GXXOVCP25WUQ5SI55SF6ZRDKIEHWJE2KOEUOCDRIO7VG3KOKJUMA`
+      PK Hash: `sha256:b5b54bb3fe3e9c00b42df2caefa4b550bfc29f09b1c7e88ec3853c42d2756288`
+      Network: **mainnet** (user sent 10 real ALGO — switched from testnet)
 
 ---
 
-## Phase 1 — Module A: The Auto-Notary
-**Goal:** A utility function that hashes a PDF and anchors the hash on Algorand testnet.
+## Phase 1 — Document Hasher + Anchor Service
+**Goal:** Given a PDF, hash it and anchor the Merkle root + signer metadata on Algorand testnet.
 
-### Tasks
-- [ ] Create `src/moduleA-notary.ts`
-  - Accept a SHA-256 hash string + DocuSign envelope ID
-  - Build a JSON note payload (`protocol`, `hash`, `envelope`, `timestamp`)
-  - Submit a 0-ALGO transaction to testnet with the note
-  - Return `{ txId, round, notePayload }`
-- [ ] Create `src/documentHasher.ts`
-  - Read a PDF file from disk
-  - Generate SHA-256 hash using Node crypto (server-side for pilot; WebCrypto for browser production)
-- [ ] Write a test script `scripts/test-notary.ts`
-  - Hash a sample PDF
-  - Submit to testnet
-  - Log the confirmed txId and AlgoExplorer link
-- [ ] Verify on https://testnet.explorer.perawallet.app
+### 1.1 — Document Hasher (`src/documentHasher.ts`)
+- [ ] `hashPdf(pdfBuffer: Buffer): string` — returns `sha256:<hex>`
+- [ ] Never write PDF to disk; operate on buffer only
+- [ ] Unit test: same PDF → same hash; 1-byte change → different hash
 
-**Acceptance:** A confirmed testnet transaction whose note field contains the document hash,
-visible and permanently readable on-chain.
+### 1.2 — Merkle Batcher (`src/merkleBatcher.ts`)
+- [ ] Accumulate `{ envelopeId, leafHash, signingMetadata }` entries
+- [ ] On flush: build Merkle tree with `merkletreejs`
+- [ ] Return: `{ merkleRoot, leaves: [{ envelopeId, leafHash, merkleProof, signingMetadata }], batchId }`
 
----
+### 1.3 — Algorand Anchor (`src/algorandAnchor.ts`)
+- [ ] Build note payload:
+      `{ protocol:"pqva/1", merkleRoot, batchId, count, signers:[{passkeyPublicKey, passkeySignature}] }`
+- [ ] Assert note ≤ 1024 bytes; hash signingMetadata if over limit
+- [ ] Submit 0-ALGO payment txn to testnet via algosdk
+- [ ] Return `{ txnId, confirmedRound }`
 
-## Phase 2 — Module B: The Settler (TEALScript Escrow)
-**Goal:** A smart contract that holds USDC and releases it when both parties sign.
+### 1.4 — ML-DSA Bundle Signer (`src/bundleSigner.ts`)
+- [ ] Load DocuSign ML-DSA private key from env
+- [ ] `signBundle(bundle): string` — returns ML-DSA signature over canonical bundle bytes
+- [ ] `verifyBundle(bundle, signature, publicKey): boolean`
 
-### Tasks
-- [ ] Write `contracts/SettleEscrow.algo.ts` (TEALScript)
-  - `createApplication(signerA, signerB, asset, amount, envelopeId)`
-  - `bootstrap(mbrPay)` — fund MBR + opt-in to USDC ASA
-  - `executeAgreement()` — each signer calls once; releases USDC on second call
-- [ ] Compile with `npx tealscript` → output to `contracts/artifacts/`
-- [ ] Write `src/moduleB-deploy.ts`
-  - Deploy the contract to testnet
-  - Call `bootstrap()` with 0.2 ALGO MBR payment
-  - Deposit USDC into the contract address
-  - Signer A calls `executeAgreement()`
-  - Signer B calls `executeAgreement()`
-  - Verify USDC lands in Signer A's account
-- [ ] Write `scripts/test-escrow.ts` end-to-end test
-
-**Acceptance:** Two separate accounts each call `executeAgreement()` and USDC auto-transfers
-to Signer A without any manual step. Visible on testnet explorer.
+**Acceptance:** `scripts/test-anchor.ts` with 3 sample PDFs → one testnet txn whose
+note contains the Merkle root and signer metadata, visible at testnet.explorer.perawallet.app.
 
 ---
 
-## Phase 3 — Module C: The Quantum Receipt
-**Goal:** Query Algorand for the State Proof covering the notary transaction and package
-everything into a downloadable JSON receipt.
+## Phase 2 — State Proof Collector
+**Goal:** Retrieve the state proof round that covers the anchor transaction and store
+all data needed for the auditor.
 
-### Tasks
-- [ ] Write `src/moduleC-receipt.ts`
-  - Accept a confirmed `txId`
-  - Fetch transaction details from Indexer
-  - Fetch block header from Algod
-  - Calculate the State Proof round (`ceil(confirmedRound / 256) * 256`)
-  - Fetch State Proof from Algod `/v2/stateproofs/{round}`
-  - Fetch transaction Merkle proof from `/v2/blocks/{round}/transactions/{txid}/proof`
-  - Assemble into a single `QuantumReceipt` JSON object
-- [ ] Write `src/saveReceipt.ts` — save receipt as `receipt-{txId}.json`
-- [ ] Document the verification steps in `docs/receipt-verification.md`
-  - What each field proves
-  - How an auditor verifies the receipt offline
-  - State Proof timing note (available ~17 min after confirmation)
+### 2.1 — State Proof Fetcher (`src/stateProofCollector.ts`)
+- [ ] Accept `{ txnId, confirmedRound }`
+- [ ] Calculate state proof round: `Math.ceil(confirmedRound / 256) * 256`
+- [ ] Poll `GET /v2/stateproofs/{stateProofRound}` until available (retry 2 min, timeout 25 min)
+- [ ] Return `{ stateProofRound, blockTimestamp }`
 
-**Acceptance:** A saved JSON file that independently proves:
-1. This exact document hash was submitted at this timestamp
-2. It was included in Algorand block N
-3. That block is covered by a post-quantum State Proof
+### 2.2 — Proof Bundle Assembler (`src/proofBundleAssembler.ts`)
+- [ ] Combine all fields into proof bundle schema (see above)
+- [ ] Sign bundle with DocuSign ML-DSA key
+- [ ] Write to `bundles/bundle-{envelopeId}.json`
+
+**Acceptance:** A saved bundle for each test envelope containing all fields needed
+for the auditor — no field requires a DocuSign server to interpret.
 
 ---
 
-## Phase 4 — Demo Integration Script
-**Goal:** One command runs the full pilot flow end-to-end.
+## Phase 3 — Offline Verifier CLI
+**This is the demo.**
 
-### Tasks
-- [ ] Write `scripts/demo.ts`
-  1. Load accounts from `.env`
-  2. Hash `sample-contract.pdf`
-  3. Notarize (Module A) → log `txId`
-  4. Deploy escrow with 1 USDC (Module B deploy)
-  5. Signer A calls `executeAgreement()`
-  6. Signer B calls `executeAgreement()` → USDC releases
-  7. Build Quantum Receipt (Module C) → save `receipt.json`
-  8. Print summary table with all txIds and explorer links
-- [ ] Add a `sample-contract.pdf` to `assets/` for demo use
-- [ ] Add npm script: `npm run demo`
+### `verifier/verify.ts` — CLI using `commander`
 
-**Acceptance:** `npm run demo` produces a terminal summary and a `receipt.json` with no manual steps.
+```
+Usage: verify <pdf-path> <bundle-path>
+```
 
----
+- [ ] Step 1 — Hash match: `SHA-256(pdfBytes) === bundle.pdfHash`
+- [ ] Step 2 — Merkle inclusion: walk `bundle.merkleProof` from leaf to `bundle.merkleRoot`
+- [ ] Step 3 — AlgoNode txn lookup: confirm note contains `bundle.merkleRoot` and signer metadata
+- [ ] Step 4 — State proof confirmation: confirm `bundle.stateProofRound` exists on AlgoNode
+- [ ] Step 5 — ML-DSA verify: `mlDsa65.verify(bundle.docusignMLDSASignature, bundleBytes, docusignPublicKey)`
 
-## Phase 5 — DocuSign Webhook Bridge (Pilot Extension)
-**Goal:** Connect DocuSign's real API so the notarization triggers automatically on envelope completion.
+**Output on success:**
+```
+✓ PDF hash matches archive record
+✓ Hash included in Merkle batch (root: abc123...)
+✓ Merkle root anchored in Algorand txn ABCD... (2026-06-11T09:00:00Z)
+✓ Signer passkey metadata confirmed in anchor transaction
+✓ Transaction covered by Algorand state proof (round 12,345,952)
+✓ DocuSign ML-DSA attestation valid — NIST FIPS-204
 
-### Tasks
-- [ ] Register a DocuSign developer account at https://developers.docusign.com
-- [ ] Create a DocuSign app and obtain OAuth 2.0 credentials
-- [ ] Write `src/docusignClient.ts`
-  - OAuth 2.0 token exchange
-  - Download completed envelope PDF (`/v2.1/accounts/{id}/envelopes/{id}/documents/combined`)
-- [ ] Write `src/webhookHandler.ts`
-  - Express endpoint to receive DocuSign Connect events
-  - Validate HMAC-SHA256 signature
-  - On `status: "completed"` → auto-trigger Module A notarization
-- [ ] Wire webhook → Module A → Module B settlement trigger
-- [ ] Test with a real DocuSign sandbox envelope
+VALID — document integrity proven as of 2026-06-11T09:00:00Z
+        AlgoNode confirms on-chain record.
+        DocuSign attestation verified offline.
+        Signer identity quantum-resistantly recorded via Algorand state proof.
+```
 
-**Acceptance:** Send a DocuSign envelope in sandbox, both parties sign, webhook fires, document
-is notarized on-chain within 30 seconds, receipt generated automatically.
+**Acceptance:** Verifier passes on valid bundle. Fails correctly if:
+(a) PDF modified, (b) bundle tampered, (c) wrong PDF, (d) ML-DSA signature invalid.
 
 ---
 
-## Phase 6 — Pilot Demo UI (Optional, for presentation quality)
-**Goal:** A minimal Next.js page to make the demo visually compelling for DocuSign stakeholders.
+## Phase 4 — DocuSign Connect Bridge
+**Goal:** Real webhook so the flow triggers automatically on envelope completion.
 
-### Tasks
-- [ ] Scaffold `apps/web` with Next.js 15 + TypeScript + Tailwind
-- [ ] Single-page demo flow:
-  - Upload PDF → show SHA-256 hash
-  - "Notarize" button → submit to Algorand → show txId + explorer link
-  - "View Quantum Receipt" → render the JSON in a readable card
-- [ ] Escrow status panel showing approval state for both signers
-- [ ] Liquid Auth QR integration (additive signing step on top of DocuSign)
+### 4.1 — Webhook Handler (`src/webhookHandler.ts`)
+- [ ] `POST /webhook/docusign`
+- [ ] Validate `X-DocuSign-Signature-1` HMAC-SHA256 (reject + 400 if invalid)
+- [ ] On `status === "completed"`: fetch combined PDF from DocuSign API
+- [ ] Extract signer passkey metadata from envelope data
+- [ ] Pass to Merkle Batcher queue
+- [ ] Respond 200 immediately
+
+### 4.2 — DocuSign API Client (`src/docusignClient.ts`)
+- [ ] OAuth 2.0 token exchange (sandbox)
+- [ ] `downloadEnvelopePdf(envelopeId): Promise<Buffer>`
+- [ ] `getSignerMetadata(envelopeId): Promise<SignerMetadata[]>`
+
+**Acceptance:** `npm run e2e` sends envelope → webhook fires → bundle generated → verifier VALID.
 
 ---
 
-## Key Reference Information
+## Phase 5 — Pitch Materials
+
+- [ ] `docs/pitch.md` — 1-pager: the problem, the solution, build vs. borrow
+- [ ] `docs/compliance-faq.md` — pre-empt legal/compliance questions
+- [ ] `docs/architecture.md` — data flow, proof bundle schema
+- [ ] `assets/sample-contract.pdf` — generic sample for demo
+- [ ] README comparison table
+
+---
+
+## Phase 6 — Demo UI (Optional)
+
+Single-page app: upload PDF + bundle → verify client-side → step-by-step results → VALID/INVALID banner.
+
+---
+
+## Key Reference
 
 | Item | Value |
 |---|---|
 | Testnet Algod | `https://testnet-api.algonode.cloud` |
 | Testnet Indexer | `https://testnet-idx.algonode.cloud` |
 | Testnet Explorer | `https://testnet.explorer.perawallet.app` |
-| Testnet ALGO Faucet | `https://bank.testnet.algorand.network` |
-| Testnet USDC ASA ID | `10458941` |
-| State Proof Interval | `256 rounds (~17 minutes)` |
-| Note field limit | `1024 bytes` |
-| Escrow MBR funding | `0.2 ALGO (0.1 base + 0.1 ASA opt-in)` |
+| ALGO Faucet | `https://bank.testnet.algorand.network` |
+| State Proof interval | 256 rounds (~17 min) |
+| State Proof signature | Falcon-512 (covers all txns in the block) |
+| Algorand note field limit | 1024 bytes |
+| DocuSign institutional key | ML-DSA / NIST FIPS-204 |
+| NIST ML-DSA finalised | 2024 |
+| CNSA 2.0 PQC deadline | ~2030–2035 |
 
 ---
 
-## Architecture Decisions (Locked)
+## Architecture Decisions
 
-- **Hashing is client/script-side.** SHA-256 is computed from raw PDF bytes before upload. The server re-validates but is never in the signing trust path.
-- **DocuSign identity is not replaced.** Liquid Auth is additive. DocuSign's KYC/AML remains the legal identity anchor.
-- **Testnet throughout.** No real funds until DocuSign pilot agreement is signed.
-- **2-of-2 escrow for MVP.** M-of-N threshold is Phase 2 of a production contract.
-- **Note field schema is versioned.** `"protocol": "aurasign/1"` so future indexer queries can filter by version.
+- **Hashes only on-chain.** SHA-256 hashes are not reversible. No document content, no PII.
+- **Signer metadata in anchor note.** Algorand's Falcon state proofs quantum-resistantly cover
+  who signed and when. No separate ML-DSA signing ceremony required today.
+- **ML-DSA for DocuSign's institutional key.** FIPS-204 is fully standardised — a defensible
+  compliance claim. Falcon Round 3 is not standardised and may be incompatible with FN-DSA.
+- **AlgoNode for txn verification.** Not DocuSign servers. Public, decentralised, free.
+- **No offline Falcon state proof verifier.** Not in any JS library. Not needed for the PoC.
+  Deferred — buildable later without changing the proof bundle schema.
+- **Proof bundle is the artifact.** Self-contained JSON. DocuSign could store it alongside
+  the envelope, email it to signers, or offer it as a download.
+- **FIDO PQC upgrade path.** When ML-DSA passkeys ship in devices (2027–2028), signer
+  identity becomes doubly quantum-resistant. No architectural changes required.
+- **Merkle batching.** One txn per batch rather than one per envelope. Scales to thousands
+  of envelopes per day at negligible cost (~$0.001/batch).
+- **Protocol versioning.** `"protocol":"pqva/1"` in every note — future indexers can filter by version.
