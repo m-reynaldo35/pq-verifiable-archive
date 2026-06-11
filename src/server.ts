@@ -35,10 +35,13 @@ app.post(
       return;
     }
 
+    const raw = bundleFile.buffer.toString('utf8');
+    process.stderr.write(`[verify] bundle size=${bundleFile.size} buflen=${bundleFile.buffer.length} mimetype=${bundleFile.mimetype} first80=${JSON.stringify(raw.slice(0, 80))}\n`);
     let bundle: ProofBundle;
     try {
-      bundle = JSON.parse(bundleFile.buffer.toString('utf8')) as ProofBundle;
-    } catch {
+      bundle = JSON.parse(raw) as ProofBundle;
+    } catch (e) {
+      process.stderr.write(`[verify] JSON.parse error: ${(e as Error).message}\n`);
       res.status(400).json({ valid: false, steps: [], signers: [], error: 'bundle is not valid JSON' });
       return;
     }

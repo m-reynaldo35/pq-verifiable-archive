@@ -214,29 +214,37 @@
   const signersEl = document.getElementById('signers');
   const banner = document.getElementById('banner');
 
+  // Store file references independently — input.files is read-only so
+  // drag-and-drop cannot assign to it; use these variables for FormData instead.
+  let bundleFile = null;
+  let pdfFile = null;
+
   function syncState() {
-    const f = bundleInput.files[0];
-    bundleName.textContent = f ? f.name : '';
-    const p = pdfInput.files[0];
-    pdfName.textContent = p ? p.name : '';
-    verifyBtn.disabled = !f;
+    bundleName.textContent = bundleFile ? bundleFile.name : '';
+    pdfName.textContent = pdfFile ? pdfFile.name : '';
+    verifyBtn.disabled = !bundleFile;
   }
 
-  bundleInput.addEventListener('change', syncState);
-  pdfInput.addEventListener('change', syncState);
+  bundleInput.addEventListener('change', () => {
+    if (bundleInput.files[0]) { bundleFile = bundleInput.files[0]; syncState(); }
+  });
+  pdfInput.addEventListener('change', () => {
+    if (pdfInput.files[0]) { pdfFile = pdfInput.files[0]; syncState(); }
+  });
 
-  function wireDrop(zoneId, input) {
+  function wireDrop(zoneId, onFile) {
     const zone = document.getElementById(zoneId);
     ['dragenter','dragover'].forEach(ev =>
       zone.addEventListener(ev, e => { e.preventDefault(); zone.classList.add('drag'); }));
     ['dragleave','drop'].forEach(ev =>
       zone.addEventListener(ev, e => { e.preventDefault(); zone.classList.remove('drag'); }));
     zone.addEventListener('drop', e => {
-      if (e.dataTransfer.files.length) { input.files = e.dataTransfer.files; syncState(); }
+      const f = e.dataTransfer.files[0];
+      if (f) { onFile(f); syncState(); }
     });
   }
-  wireDrop('bundleZone', bundleInput);
-  wireDrop('pdfZone', pdfInput);
+  wireDrop('bundleZone', f => { bundleFile = f; });
+  wireDrop('pdfZone', f => { pdfFile = f; });
 
   function esc(s) {
     return String(s).replace(/[&<>"']/g, c =>
@@ -299,8 +307,8 @@
     spinner.style.display = 'block';
 
     const fd = new FormData();
-    fd.append('bundle', bundleInput.files[0]);
-    if (pdfInput.files[0]) fd.append('pdf', pdfInput.files[0]);
+    fd.append('bundle', bundleFile);
+    if (pdfFile) fd.append('pdf', pdfFile);
 
     try {
       const res = await fetch('/api/verify', { method: 'POST', body: fd });
@@ -319,7 +327,7 @@
       netError.style.display = 'block';
     } finally {
       spinner.style.display = 'none';
-      verifyBtn.disabled = !bundleInput.files[0];
+      verifyBtn.disabled = !bundleFile;
     }
   });
 </script>
