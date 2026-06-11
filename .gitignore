@@ -4,3 +4,4 @@ dist/
 bundles/
 assets/*.pdf
 *.pdf
+!assets/sample-contract.pdf

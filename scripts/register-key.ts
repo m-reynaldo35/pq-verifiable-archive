@@ -58,4 +58,4 @@ async function main() {
   console.log(`DOCUSIGN_KEY_REGISTRATION_TXN_ID="${txid}"`);
 }
 
-main().catch(console.error);
+main().catch(e => { console.error(e); process.exit(1); });

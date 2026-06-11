@@ -1,7 +1,7 @@
 {
   "name": "docutestproject",
   "version": "1.0.0",
-  "description": "",
+  "description": "Post-quantum verifiable archive for DocuSign envelopes",
   "main": "index.js",
   "directories": {
     "doc": "docs"
@@ -10,14 +10,16 @@
     "generate-wallet": "tsx scripts/generate-wallet.ts",
     "register-key": "tsx scripts/register-key.ts",
     "test-anchor": "tsx scripts/test-anchor.ts",
-    "verify": "tsx verifier/verify.ts"
+    "verify": "tsx verifier/verify.ts",
+    "start": "npx tsx src/server.ts",
+    "e2e": "npx tsx scripts/e2e-test.ts"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/m-reynaldo35/docutestproject.git"
   },
   "keywords": [],
-  "author": "",
+  "author": "Mark Reynolds",
   "license": "ISC",
   "type": "commonjs",
   "bugs": {
@@ -26,15 +28,20 @@
   "homepage": "https://github.com/m-reynaldo35/docutestproject#readme",
   "dependencies": {
     "@noble/post-quantum": "^0.6.1",
-    "@types/express": "^5.0.6",
-    "@types/node": "^25.9.3",
+    "@types/pdfkit": "^0.17.6",
     "algosdk": "^3.6.0",
+    "canonicalize": "^2.1.0",
     "commander": "^15.0.0",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "merkletreejs": "^0.6.0",
+    "pdfkit": "^0.19.1",
     "qrcode": "^1.5.4",
     "tsx": "^4.22.4",
     "typescript": "^6.0.3"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.9.3"
   }
 }
