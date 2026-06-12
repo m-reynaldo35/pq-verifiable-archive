@@ -18,14 +18,15 @@
     --grey: #6b6b6b;
     --amber: #f5c451;
     --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
   }
   * { box-sizing: border-box; }
   body {
     margin: 0;
     background: var(--bg);
     color: var(--text);
-    font-family: var(--mono);
-    line-height: 1.5;
+    font-family: var(--sans);
+    line-height: 1.6;
     padding: 48px 20px;
   }
   .wrap { max-width: 980px; margin: 0 auto; }
@@ -43,7 +44,7 @@
     border: none;
     border-bottom: 2px solid transparent;
     color: var(--muted);
-    font-family: var(--mono);
+    font-family: var(--sans);
     font-size: 14px;
     padding: 12px 18px;
     cursor: pointer;
@@ -158,7 +159,7 @@
     letter-spacing: 0.5px;
     vertical-align: middle;
   }
-  .step .detail { font-size: 12.5px; color: var(--muted); word-break: break-all; margin-top: 2px; }
+  .step .detail { font-size: 12.5px; color: var(--muted); word-break: break-all; margin-top: 2px; font-family: var(--mono); }
   .step .detail a { color: var(--blue); text-decoration: none; }
   .step .detail a:hover { text-decoration: underline; }
   .step .spinner { width: 16px; height: 16px; }
@@ -349,6 +350,7 @@
   <header>
     <h1>PQ Verifiable Archive</h1>
     <p class="tagline">Post-quantum tamper evidence for DocuSign envelopes</p>
+    <p class="tagline" style="margin-top:6px; font-size:13px;">Contracts archived today must verify in 2040. RSA and ECDSA receipts won't survive a cryptographically relevant quantum computer — these will.</p>
   </header>
 
   <div class="tabs">
@@ -364,7 +366,7 @@
       <div class="stage-head">
         <div class="stage-num">1</div>
         <div>
-          <div class="stage-title">Document</div>
+          <div class="stage-title">Upload document</div>
           <div class="stage-summary" id="stage1Summary"></div>
         </div>
       </div>
@@ -391,7 +393,7 @@
       <div class="stage-head">
         <div class="stage-num">2</div>
         <div>
-          <div class="stage-title">Sign</div>
+          <div class="stage-title">Signing ceremony</div>
           <div class="stage-summary" id="stage2Summary"></div>
         </div>
       </div>
@@ -401,7 +403,7 @@
         <div class="field-row">
           <input class="txt" id="signerName" type="text" placeholder="Full name" />
           <input class="txt" id="signerEmail" type="email" placeholder="email@example.com" />
-          <button class="sm" id="addSigner">Add</button>
+          <button class="sm" id="addSigner" title="Demo limit: 3 signers">Add</button>
         </div>
         <div id="signerList"></div>
         <div class="actions" style="margin-top:18px;">
@@ -415,7 +417,7 @@
       <div class="stage-head">
         <div class="stage-num">3</div>
         <div>
-          <div class="stage-title">Anchor</div>
+          <div class="stage-title">Anchor to public ledger</div>
           <div class="stage-summary" id="stage3Summary"></div>
         </div>
       </div>
@@ -436,11 +438,10 @@
   <!-- ===================== TAB 3: VERIFY ===================== -->
   <section class="panel-view" id="view-verify">
     <div class="section-title" style="margin-top:0;">Verify Independently</div>
-    <p class="caption" style="margin-bottom:8px;">Upload any proof bundle and original PDF. This works without trusting any server — the checks run against public Algorand infrastructure.</p>
-    <p class="caption" style="margin-bottom:20px;color:var(--green);">All checks run in your browser — the only network requests go to public AlgoNode infrastructure.</p>
+    <p class="caption" style="margin-bottom:20px;">Drop any proof bundle and original PDF. Every check runs entirely in your browser — the only network requests go to public Algorand infrastructure. No server involved.</p>
 
     <div style="margin-bottom: 16px;">
-      <button class="demo" id="demoBtn">Try demo</button>
+      <button class="demo" id="demoBtn">Load sample bundle &amp; PDF</button>
     </div>
 
     <div class="zones">
@@ -876,7 +877,7 @@
       '</tr></thead><tbody>';
     for (const r of records) {
       const signerStr = r.signers && r.signers.length
-        ? r.signers.map(s => esc(s.name) + ' (' + fmtTime(s.signedAt) + ')').join(', ')
+        ? r.signers.map(s => esc(s.name) + ' (' + fmtDate(s.signedAt) + ')').join(', ')
         : '<span class="muted">—</span>';
       const explorer = 'https://explorer.perawallet.app/tx/' + r.txId;
       html += '<tr class="doc-row" data-id="' + esc(r.id) + '">' +
@@ -943,6 +944,9 @@
           '<div class="filename tamper-name"></div>' +
           '<input type="file" class="tamper-input" accept=".pdf,application/pdf" />' +
         '</label>' +
+        '<div class="restore-wrap" style="display:none; margin-top:10px;">' +
+          '<button class="done-ghost restore-btn">↺ Re-verify original</button>' +
+        '</div>' +
         '<div class="drawer-foot">Don\'t trust this server? Download the bundle and PDF and run the ' +
           '<a class="link verify-indep">Verify Independently</a> tab.</div>' +
       '</div>';
@@ -953,11 +957,20 @@
     const tamperZone = cell.querySelector('.tamper-zone');
     const tamperInput = cell.querySelector('.tamper-input');
     const tamperName = cell.querySelector('.tamper-name');
+    const restoreWrap = cell.querySelector('.restore-wrap');
+    const restoreBtn = cell.querySelector('.restore-btn');
     const onTamper = async (f) => {
       tamperName.textContent = f.name;
+      restoreWrap.style.display = 'block';
       cell.querySelector('.dsteps').innerHTML = '<div class="muted">Re-verifying with dropped PDF… <span class="spinner"></span></div>';
       await runDrawerVerify(id, cell, f);
     };
+    restoreBtn.addEventListener('click', async () => {
+      tamperName.textContent = '';
+      restoreWrap.style.display = 'none';
+      cell.querySelector('.dsteps').innerHTML = '<div class="muted">Re-verifying… <span class="spinner"></span></div>';
+      await runDrawerVerify(id, cell, null);
+    });
     tamperInput.addEventListener('change', () => { if (tamperInput.files[0]) onTamper(tamperInput.files[0]); });
     wireDrop(tamperZone, f => onTamper(f));
 
@@ -1038,12 +1051,12 @@
   const INDEXER_URL = 'https://mainnet-idx.algonode.cloud';
   const STATE_PROOF_SCAN_WINDOW = 1000;
 
-  // Lazily loaded @noble/post-quantum (matches the server's 0.6.x API where
-  // verify(sig, msg, pubKey)). Loaded from a CDN as an ES module.
+  // ml_dsa65 is bundled locally at /ml-dsa65.js — no CDN dependency.
+  // The "Verify Independently" claim that only AlgoNode is contacted is true.
   let _mldsaPromise = null;
   function loadMldsa() {
     if (!_mldsaPromise) {
-      _mldsaPromise = import('https://esm.sh/@noble/post-quantum@0.6.1/ml-dsa.js')
+      _mldsaPromise = import('/ml-dsa65.js')
         .then(m => m.ml_dsa65)
         .catch(e => { _mldsaPromise = null; throw e; });
     }
@@ -1161,8 +1174,9 @@
           // Cross-check embedded key against on-chain pkHash registration.
           // NOTE (trust model): the registration txn ID is read from the bundle
           // for this PoC; a hardened verifier would pin it out-of-band.
-          let regDetail = 'key registration check failed (network)';
+          let regDetail = 'key registration not confirmed — network unavailable';
           let regOk = true;
+          let regConfirmed = false;
           if (bundle.docusignKeyRegistrationTxnId) {
             try {
               const regTxn = await fetchIndexerTxn(bundle.docusignKeyRegistrationTxnId);
@@ -1172,17 +1186,20 @@
                 const pkHash = JSON.parse(note).pkHash;
                 const expected = 'sha256:' + bytesToHex(await sha256Bytes(pubBytes));
                 if (typeof pkHash === 'string') {
-                  if (pkHash === expected) { regDetail = 'key registration confirmed on-chain'; }
+                  if (pkHash === expected) { regDetail = 'key registration confirmed on-chain'; regConfirmed = true; }
                   else { regOk = false; }
                 }
               }
-            } catch { /* leave regDetail as network-failure */ }
+            } catch { /* leave regDetail as unavailable */ }
+          } else {
+            regDetail = 'key registration txn not in bundle';
           }
           if (!regOk) {
             steps.push({ name: 'ML-DSA-65 Signature', passed: false,
               detail: 'public key does not match on-chain registration' });
           } else {
             steps.push({ name: 'ML-DSA-65 Signature', passed: true,
+              informational: !regConfirmed,
               detail: 'NIST FIPS-204 attestation verified offline · ' + regDetail });
           }
         }
