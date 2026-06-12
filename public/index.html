@@ -302,6 +302,43 @@
   .empty { color: var(--muted); padding: 32px 0; text-align: center; }
   .tamper-zone { margin-top: 8px; }
   .drawer-foot { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); font-size: 12.5px; color: var(--muted); }
+
+  /* Completion card actions */
+  .done-actions { display: flex; gap: 12px; margin-top: 20px; flex-wrap: wrap; }
+  .done-primary {
+    background: var(--text);
+    color: var(--bg);
+    border: 1px solid var(--text);
+    border-radius: 6px;
+    padding: 9px 20px;
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.15s;
+  }
+  .done-primary:hover { opacity: 0.82; }
+  .done-ghost {
+    background: transparent;
+    color: var(--muted);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 9px 20px;
+    font-family: var(--mono);
+    font-size: 13px;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+  }
+  .done-ghost:hover { border-color: rgba(138,138,138,0.5); color: var(--text); }
+  .done-util { margin-top: 14px; display: flex; gap: 20px; flex-wrap: wrap; }
+  .done-util a {
+    font-size: 12.5px;
+    color: var(--muted);
+    text-decoration: none;
+    border-bottom: 1px solid transparent;
+    transition: color 0.15s, border-color 0.15s;
+  }
+  .done-util a:hover { color: var(--text); border-bottom-color: var(--border); }
 </style>
 </head>
 <body>
@@ -707,16 +744,48 @@
     }
   }
 
+  function resetArchiveWizard() {
+    archiveFile = null;
+    archiveHash = null;
+    signers = [];
+
+    stage1.classList.remove('done');
+    stage2.classList.remove('done');
+    stage2.classList.add('locked');
+    stage3.classList.add('locked');
+
+    document.getElementById('stage1Summary').textContent = '';
+    document.getElementById('stage2Summary').textContent = '';
+
+    docName.textContent = '';
+    docHash.textContent = '';
+    docHashCaption.style.display = 'none';
+    toStage2.disabled = true;
+    docInput.value = '';
+
+    signerName.value = '';
+    signerEmail.value = '';
+    signerList.innerHTML = '';
+    toStage3.disabled = true;
+
+    anchorSteps.innerHTML = '';
+    anchorDone.innerHTML = '';
+    anchorError.style.display = 'none';
+  }
+
   function showArchiveDone(record) {
     const explorer = 'https://explorer.perawallet.app/tx/' + record.txId;
     anchorDone.innerHTML =
       '<div class="banner valid" style="margin-top:24px;">ARCHIVED ✓' +
       '<span class="sub">Anchored to Algorand mainnet · round ' + esc(String(record.round)) + '</span></div>' +
-      '<p style="font-size:13px;color:var(--green);margin:12px 0 0;">Proof bundle saved to <strong>~/Downloads/proof-bundles/</strong></p>' +
-      '<div class="actions" style="margin-top:18px; flex-wrap:wrap;">' +
-      '<a class="demo" href="' + esc(explorer) + '" target="_blank" rel="noopener">View on explorer ↗</a>' +
-      '<a class="demo" href="/api/documents/' + esc(record.id) + '/bundle" id="bundleDownload">Download proof bundle</a>' +
-      '<button class="verify" id="viewInArchive">View in archive →</button>' +
+      '<p style="font-size:13px;color:var(--green);margin:10px 0 0;">Proof bundle saved to <strong>~/Downloads/proof-bundles/</strong></p>' +
+      '<div class="done-actions">' +
+      '<button class="done-primary" id="archiveAnother">Archive another document</button>' +
+      '<button class="done-ghost" id="viewInArchive">View in archive</button>' +
+      '</div>' +
+      '<div class="done-util">' +
+      '<a href="' + esc(explorer) + '" target="_blank" rel="noopener">View on Algorand explorer ↗</a>' +
+      '<a href="/api/documents/' + esc(record.id) + '/bundle">Download proof bundle</a>' +
       '</div>';
 
     // Auto-trigger download so bundle lands in browser Downloads automatically
@@ -727,6 +796,7 @@
     a.click();
     document.body.removeChild(a);
 
+    document.getElementById('archiveAnother').addEventListener('click', resetArchiveWizard);
     document.getElementById('viewInArchive').addEventListener('click', () => {
       newlyArchivedId = record.id;
       switchTab('documents');
