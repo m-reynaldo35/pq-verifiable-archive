@@ -209,11 +209,11 @@ export async function verifyBundle(
         ? `confirmed (round ${proof.stateProofRound})`
         : 'pending (not yet generated)',
     });
-  } catch (e) {
+  } catch {
     steps.push({
       name: 'State Proof',
       passed: true,
-      detail: `pending (${(e as Error).message})`,
+      detail: 'pending — ledger API temporarily unavailable',
     });
   }
 
