@@ -275,7 +275,7 @@ export async function verifyBundle(
       passed: true,
       informational: true,
       detail: proof
-        ? `confirmed — Falcon-512 state proof covers round ${proof.stateProofRound} (PQ-safe finality)`
+        ? `confirmed — Falcon-512 state proof covers batch up to round ${proof.stateProofRound} (PQ-safe finality)`
         : 'pending — not yet generated (check back in ~1 hour)',
     });
   } catch {

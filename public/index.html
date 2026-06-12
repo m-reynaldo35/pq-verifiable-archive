@@ -1044,7 +1044,8 @@
   function loadMldsa() {
     if (!_mldsaPromise) {
       _mldsaPromise = import('https://esm.sh/@noble/post-quantum@0.6.1/ml-dsa.js')
-        .then(m => m.ml_dsa65);
+        .then(m => m.ml_dsa65)
+        .catch(e => { _mldsaPromise = null; throw e; });
     }
     return _mldsaPromise;
   }
@@ -1186,7 +1187,12 @@
           }
         }
       } catch (e) {
-        steps.push({ name: 'ML-DSA-65 Signature', passed: false, detail: e.message });
+        const isModuleLoad = e.message && (e.message.includes('import') || e.message.includes('fetch') || e.message.includes('network') || e.message.includes('Failed to fetch') || e.message.includes('esm.sh'));
+        operationalError = true;
+        steps.push({ name: 'ML-DSA-65 Signature', passed: false, error: true,
+          detail: isModuleLoad
+            ? 'ML-DSA library unavailable — check network connection and retry'
+            : e.message });
       }
     }
 
@@ -1244,18 +1250,21 @@
     }
 
     // Step 5 — Falcon-512 state proof coverage (informational).
+    // Each stpf txn is committed after the interval it attests. The stpf covering
+    // round R is for interval k = ceil(R/256); query starting from that boundary.
     try {
       const round = bundle.algorandRound;
-      const url = INDEXER_URL + '/v2/transactions?tx-type=stpf&min-round=' + round +
-        '&max-round=' + (round + STATE_PROOF_SCAN_WINDOW) + '&limit=1';
+      const attestedBoundary = Math.ceil(round / 256) * 256;
+      const url = INDEXER_URL + '/v2/transactions?tx-type=stpf&min-round=' + attestedBoundary +
+        '&max-round=' + (attestedBoundary + STATE_PROOF_SCAN_WINDOW) + '&limit=1';
       const res = await fetch(url);
       if (!res.ok) throw new Error('indexer ' + res.status);
       const body = await res.json();
       const txns = body.transactions || [];
-      const covering = txns.find(t => typeof t['confirmed-round'] === 'number' && t['confirmed-round'] >= round);
+      const covering = txns.find(t => typeof t['confirmed-round'] === 'number');
       steps.push({ name: 'Falcon-512 State Proof', passed: true, informational: true,
         detail: covering
-          ? 'confirmed — Falcon-512 state proof covers round ' + covering['confirmed-round'] + ' (PQ-safe finality)'
+          ? 'confirmed — Falcon-512 state proof covers batch up to round ' + attestedBoundary + ' (PQ-safe finality)'
           : 'pending — not yet generated (check back in ~1 hour)' });
     } catch {
       steps.push({ name: 'Falcon-512 State Proof', passed: true, informational: true,

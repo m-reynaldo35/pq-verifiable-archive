@@ -28,18 +28,18 @@ export function coveringRound(round: number): number {
 }
 
 // Query the archival indexer for state-proof (`stpf`) transactions covering the
-// given round. Algod's /v2/stateproofs endpoint is non-archival and returns 500
-// for entries older than ~30 minutes, so we use the indexer instead. A `stpf`
-// transaction's `confirmed-round` is the round at which the state proof was
-// committed; the proof it carries covers all rounds up to (and including) that
-// point, so the first `stpf` with confirmed-round >= our round is the one that
-// finalises us.
+// given round. Each stpf txn is committed several rounds *after* the interval
+// it attests — confirmed-round is NOT the attested round. The stpf covering
+// round R is the one for interval k = ceil(R/256), committed at or after
+// round 256k. We therefore start the query at coveringRound(round) so we find
+// the right interval's proof; any stpf confirmed from there covers our round.
 export async function getStateProofForRound(
   round: number,
 ): Promise<StateProofData | null> {
+  const attestedBoundary = coveringRound(round);
   const url =
     `${indexerUrl()}/v2/transactions` +
-    `?tx-type=stpf&min-round=${round}&max-round=${round + ROUND_SCAN_WINDOW}&limit=1`;
+    `?tx-type=stpf&min-round=${attestedBoundary}&max-round=${attestedBoundary + ROUND_SCAN_WINDOW}&limit=1`;
   const res = await fetch(url);
 
   if (!res.ok) {
@@ -49,11 +49,13 @@ export async function getStateProofForRound(
   const body = (await res.json()) as IndexerStpfResponse;
   const txns = body.transactions ?? [];
   const covering = txns.find(
-    t => typeof t['confirmed-round'] === 'number' && (t['confirmed-round'] as number) >= round,
+    t => typeof t['confirmed-round'] === 'number',
   );
   if (!covering) return null;
 
-  return { stateProofRound: covering['confirmed-round'] as number, raw: covering };
+  // Report the attested boundary (the interval end), not the confirmed-round
+  // of the commitment transaction — the latter is higher and misleading.
+  return { stateProofRound: attestedBoundary, raw: covering };
 }
 
 const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
