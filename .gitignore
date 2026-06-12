@@ -5,5 +5,7 @@ bundles/
 !bundles/sample-contract-bundle.json
 !bundles/test-bundle.json
 assets/*.pdf
-*.pdf
 !assets/sample-contract.pdf
+!assets/demo-contracts/*.pdf
+*.pdf
+archive/

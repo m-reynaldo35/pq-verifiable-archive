@@ -28,14 +28,32 @@
     line-height: 1.5;
     padding: 48px 20px;
   }
-  .wrap { max-width: 880px; margin: 0 auto; }
-  header { margin-bottom: 40px; }
+  .wrap { max-width: 980px; margin: 0 auto; }
+  header { margin-bottom: 28px; }
   h1 {
     font-size: 28px;
     margin: 0 0 6px;
     letter-spacing: -0.5px;
   }
   .tagline { color: var(--muted); font-size: 14px; margin: 0; }
+
+  .tabs { display: flex; gap: 4px; border-bottom: 1px solid var(--border); margin-bottom: 32px; }
+  .tab {
+    background: transparent;
+    border: none;
+    border-bottom: 2px solid transparent;
+    color: var(--muted);
+    font-family: var(--mono);
+    font-size: 14px;
+    padding: 12px 18px;
+    cursor: pointer;
+    margin-bottom: -1px;
+  }
+  .tab:hover { color: var(--text); }
+  .tab.active { color: var(--text); border-bottom-color: var(--blue); }
+  .panel-view { display: none; }
+  .panel-view.active { display: block; }
+
   .zones { display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
   .zone {
     flex: 1 1 280px;
@@ -74,7 +92,8 @@
     border-top-color: var(--blue);
     border-radius: 50%;
     animation: spin 0.7s linear infinite;
-    display: none;
+    display: inline-block;
+    vertical-align: middle;
   }
   @keyframes spin { to { transform: rotate(360deg); } }
   .net-error {
@@ -87,7 +106,6 @@
     font-size: 13px;
     margin-top: 16px;
   }
-  #results { display: none; margin-top: 32px; }
   .section-title {
     font-size: 12px;
     color: var(--muted);
@@ -121,6 +139,7 @@
   .icon.info { background: rgba(107,107,107,0.2); color: var(--grey); }
   .icon.skip { background: rgba(245,196,81,0.15); color: var(--amber); }
   .icon.error { background: rgba(245,196,81,0.18); color: var(--amber); }
+  .icon.running { background: rgba(90,169,255,0.15); }
   .step .body { flex: 1; min-width: 0; }
   .step .name { font-size: 14px; font-weight: 600; }
   .step .subname { font-size: 12px; color: var(--muted); margin-top: 1px; }
@@ -139,6 +158,7 @@
   .step .detail { font-size: 12.5px; color: var(--muted); word-break: break-all; margin-top: 2px; }
   .step .detail a { color: var(--blue); text-decoration: none; }
   .step .detail a:hover { text-decoration: underline; }
+  .step .spinner { width: 16px; height: 16px; }
   .signer {
     background: var(--panel);
     border: 1px solid var(--border);
@@ -161,6 +181,7 @@
   .banner.valid { background: rgba(54,211,153,0.12); border: 1px solid var(--green); color: var(--green); }
   .banner.invalid { background: rgba(248,114,114,0.12); border: 1px solid var(--red); color: var(--red); }
   .banner.warn { background: rgba(245,196,81,0.12); border: 1px solid var(--amber); color: var(--amber); }
+  .banner .sub { display: block; font-size: 13px; font-weight: 400; color: var(--muted); margin-top: 8px; letter-spacing: 0; }
   button.demo {
     background: transparent;
     color: var(--blue);
@@ -173,7 +194,114 @@
     transition: border-color 0.15s;
   }
   button.demo:hover { border-color: var(--blue); }
-  .banner .sub { display: block; font-size: 13px; font-weight: 400; color: var(--muted); margin-top: 8px; letter-spacing: 0; }
+  .link { color: var(--blue); cursor: pointer; text-decoration: none; }
+  .link:hover { text-decoration: underline; }
+  .muted { color: var(--muted); }
+  .caption { font-size: 12.5px; color: var(--muted); margin-top: 6px; }
+
+  /* Wizard */
+  .stage {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 22px;
+    margin-bottom: 16px;
+    transition: opacity 0.15s;
+  }
+  .stage.locked { opacity: 0.4; pointer-events: none; }
+  .stage.done .stage-body { display: none; }
+  .stage-head { display: flex; align-items: center; gap: 12px; }
+  .stage-num {
+    flex: 0 0 26px; width: 26px; height: 26px;
+    border-radius: 50%; border: 1px solid var(--border);
+    display: grid; place-items: center; font-size: 13px; color: var(--muted);
+  }
+  .stage.done .stage-num { background: rgba(54,211,153,0.15); color: var(--green); border-color: var(--green); }
+  .stage-title { font-size: 16px; font-weight: 600; }
+  .stage-summary { font-size: 13px; color: var(--green); display: none; }
+  .stage.done .stage-summary { display: block; }
+  .stage.done .stage-title { color: var(--muted); }
+  .stage-body { margin-top: 18px; }
+
+  .hash-line { font-size: 13px; color: var(--green); word-break: break-all; margin-top: 12px; }
+
+  .field-row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+  input.txt {
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-family: var(--mono);
+    font-size: 13px;
+    padding: 9px 12px;
+  }
+  button.sm {
+    background: transparent;
+    color: var(--blue);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 8px 14px;
+    font-family: var(--mono);
+    font-size: 13px;
+    cursor: pointer;
+  }
+  button.sm:hover { border-color: var(--blue); }
+  button.sm:disabled { opacity: 0.35; cursor: not-allowed; }
+
+  .signer-card {
+    display: flex; align-items: center; justify-content: space-between; gap: 12px;
+    background: var(--panel-2);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin-bottom: 8px;
+    font-size: 13px;
+  }
+  .signer-card .signed { color: var(--green); font-size: 12.5px; }
+
+  /* Modal */
+  .overlay {
+    display: none;
+    position: fixed; inset: 0;
+    background: rgba(0,0,0,0.7);
+    z-index: 50;
+    align-items: center; justify-content: center;
+    padding: 20px;
+  }
+  .overlay.open { display: flex; }
+  .modal {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 32px;
+    max-width: 520px; width: 100%;
+  }
+  .sig-name {
+    font-style: italic;
+    font-size: 36px;
+    font-family: Georgia, serif;
+    color: var(--text);
+    padding: 12px 4px;
+  }
+  .sig-line { border: none; border-top: 1px solid var(--muted); margin: 4px 0 20px; }
+
+  /* Table */
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; letter-spacing: 1px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  td { padding: 12px; border-bottom: 1px solid var(--border); vertical-align: top; }
+  tr.doc-row.highlight { background: rgba(90,169,255,0.08); }
+  td a { color: var(--blue); text-decoration: none; }
+  td a:hover { text-decoration: underline; }
+  .row-actions { display: flex; gap: 10px; align-items: center; white-space: nowrap; }
+  .drawer-cell { padding: 0; }
+  .drawer {
+    background: var(--panel-2);
+    border-left: 2px solid var(--blue);
+    padding: 20px 24px;
+  }
+  .empty { color: var(--muted); padding: 32px 0; text-align: center; }
+  .tamper-zone { margin-top: 8px; }
+  .drawer-foot { margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border); font-size: 12.5px; color: var(--muted); }
 </style>
 </head>
 <body>
@@ -183,50 +311,554 @@
     <p class="tagline">Post-quantum tamper evidence for DocuSign envelopes</p>
   </header>
 
-  <div style="margin-bottom: 16px;">
-    <button class="demo" id="demoBtn">Try demo</button>
+  <div class="tabs">
+    <button class="tab active" data-tab="archive">Archive a Document</button>
+    <button class="tab" data-tab="documents">Archived Documents</button>
+    <button class="tab" data-tab="verify">Verify Independently</button>
   </div>
 
-  <div class="zones">
-    <label class="zone" id="bundleZone">
-      <div class="label">Proof Bundle (JSON) <span class="req">*</span></div>
-      <div class="hint" data-default>Click or drop a .json bundle</div>
-      <div class="filename" id="bundleName"></div>
-      <input type="file" id="bundleInput" accept=".json,application/json" />
-    </label>
-    <label class="zone" id="pdfZone">
-      <div class="label">Original PDF <span class="opt">(optional)</span></div>
-      <div class="hint" data-default>Click or drop the original .pdf</div>
-      <div class="filename" id="pdfName"></div>
-      <input type="file" id="pdfInput" accept=".pdf,application/pdf" />
-    </label>
-  </div>
-
-  <div class="actions">
-    <button class="verify" id="verifyBtn" disabled>Verify</button>
-    <div class="spinner" id="spinner"></div>
-  </div>
-
-  <div class="net-error" id="netError"></div>
-
-  <div id="results">
-    <div class="section-title">Verification Steps</div>
-    <div id="steps"></div>
-
-    <div id="signersWrap" style="display:none">
-      <div class="section-title">Signers</div>
-      <div id="signers"></div>
+  <!-- ===================== TAB 1: ARCHIVE ===================== -->
+  <section class="panel-view active" id="view-archive">
+    <!-- Stage 1 -->
+    <div class="stage" id="stage1">
+      <div class="stage-head">
+        <div class="stage-num">1</div>
+        <div>
+          <div class="stage-title">Document</div>
+          <div class="stage-summary" id="stage1Summary"></div>
+        </div>
+      </div>
+      <div class="stage-body">
+        <label class="zone" id="docZone">
+          <div class="label">Drop a contract PDF</div>
+          <div class="hint" data-default>Click or drop a .pdf</div>
+          <div class="filename" id="docName"></div>
+          <input type="file" id="docInput" accept=".pdf,application/pdf" />
+        </label>
+        <div class="hash-line" id="docHash"></div>
+        <div class="caption" id="docHashCaption" style="display:none">This fingerprint is all that ever leaves your document — the PDF itself is never sent to the blockchain.</div>
+        <div style="margin-top:14px;">
+          <a class="link" id="useSample">Use sample contract</a>
+        </div>
+        <div class="actions" style="margin-top:18px;">
+          <button class="verify" id="toStage2" disabled>Next →</button>
+        </div>
+      </div>
     </div>
 
-    <div class="banner" id="banner"></div>
+    <!-- Stage 2 -->
+    <div class="stage locked" id="stage2">
+      <div class="stage-head">
+        <div class="stage-num">2</div>
+        <div>
+          <div class="stage-title">Sign</div>
+          <div class="stage-summary" id="stage2Summary"></div>
+        </div>
+      </div>
+      <div class="stage-body">
+        <div class="section-title" style="margin-top:0;">Signing Ceremony</div>
+        <div class="caption" style="margin-top:0; margin-bottom:16px;">Simulated. In production, signer data arrives automatically from DocuSign Connect.</div>
+        <div class="field-row">
+          <input class="txt" id="signerName" type="text" placeholder="Full name" />
+          <input class="txt" id="signerEmail" type="email" placeholder="email@example.com" />
+          <button class="sm" id="addSigner">Add</button>
+        </div>
+        <div id="signerList"></div>
+        <div class="actions" style="margin-top:18px;">
+          <button class="verify" id="toStage3" disabled>Archive &amp; Anchor →</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stage 3 -->
+    <div class="stage locked" id="stage3">
+      <div class="stage-head">
+        <div class="stage-num">3</div>
+        <div>
+          <div class="stage-title">Anchor</div>
+          <div class="stage-summary" id="stage3Summary"></div>
+        </div>
+      </div>
+      <div class="stage-body">
+        <div class="section-title" style="margin-top:0;">Anchoring to Algorand</div>
+        <div id="anchorSteps"></div>
+        <div id="anchorDone"></div>
+        <div class="net-error" id="anchorError"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ===================== TAB 2: DOCUMENTS ===================== -->
+  <section class="panel-view" id="view-documents">
+    <div id="docsContent"></div>
+  </section>
+
+  <!-- ===================== TAB 3: VERIFY ===================== -->
+  <section class="panel-view" id="view-verify">
+    <div class="section-title" style="margin-top:0;">Verify Independently</div>
+    <p class="caption" style="margin-bottom:20px;">Upload any proof bundle and original PDF. This works without trusting any server — the checks run against public Algorand infrastructure.</p>
+
+    <div style="margin-bottom: 16px;">
+      <button class="demo" id="demoBtn">Try demo</button>
+    </div>
+
+    <div class="zones">
+      <label class="zone" id="bundleZone">
+        <div class="label">Proof Bundle (JSON) <span class="req">*</span></div>
+        <div class="hint" data-default>Click or drop a .json bundle</div>
+        <div class="filename" id="bundleName"></div>
+        <input type="file" id="bundleInput" accept=".json,application/json" />
+      </label>
+      <label class="zone" id="pdfZone">
+        <div class="label">Original PDF <span class="opt">(optional)</span></div>
+        <div class="hint" data-default>Click or drop the original .pdf</div>
+        <div class="filename" id="pdfName"></div>
+        <input type="file" id="pdfInput" accept=".pdf,application/pdf" />
+      </label>
+    </div>
+
+    <div class="actions">
+      <button class="verify" id="verifyBtn" disabled>Verify Independently</button>
+      <div class="spinner" id="spinner" style="display:none"></div>
+    </div>
+
+    <div class="net-error" id="netError"></div>
+
+    <div id="results" style="display:none">
+      <div class="section-title">Verification Steps</div>
+      <div id="steps"></div>
+      <div id="signersWrap" style="display:none">
+        <div class="section-title">Signers</div>
+        <div id="signers"></div>
+      </div>
+      <div class="banner" id="banner"></div>
+    </div>
+  </section>
+</div>
+
+<!-- Signature modal -->
+<div class="overlay" id="sigOverlay">
+  <div class="modal">
+    <div class="muted" style="font-size:12px; text-transform:uppercase; letter-spacing:1px;">Sign here</div>
+    <div class="sig-name" id="sigPreview"></div>
+    <hr class="sig-line" />
+    <div class="actions">
+      <button class="verify" id="adoptSign">Adopt &amp; Sign</button>
+      <button class="demo" id="cancelSign">Cancel</button>
+    </div>
   </div>
 </div>
 
+<script src="/app.js"></script>
 <script>
   ['dragover', 'drop'].forEach(ev =>
     document.addEventListener(ev, e => e.preventDefault())
   );
 
+  // -------------------- Tabs --------------------
+  const tabs = document.querySelectorAll('.tab');
+  const views = {
+    archive: document.getElementById('view-archive'),
+    documents: document.getElementById('view-documents'),
+    verify: document.getElementById('view-verify'),
+  };
+  function switchTab(name) {
+    tabs.forEach(t => t.classList.toggle('active', t.dataset.tab === name));
+    Object.entries(views).forEach(([k, v]) => v.classList.toggle('active', k === name));
+    if (name === 'documents') loadDocuments();
+  }
+  tabs.forEach(t => t.addEventListener('click', () => switchTab(t.dataset.tab)));
+
+  function wireDrop(zone, onFile) {
+    ['dragenter','dragover'].forEach(ev =>
+      zone.addEventListener(ev, e => { e.preventDefault(); zone.classList.add('drag'); }));
+    ['dragleave','drop'].forEach(ev =>
+      zone.addEventListener(ev, e => { e.preventDefault(); zone.classList.remove('drag'); }));
+    zone.addEventListener('drop', e => {
+      const f = e.dataTransfer.files[0];
+      if (f) onFile(f);
+    });
+  }
+
+  function fmtSize(bytes) {
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
+  async function sha256hex(file) {
+    const buf = await file.arrayBuffer();
+    const digest = await crypto.subtle.digest('SHA-256', buf);
+    return Array.from(new Uint8Array(digest))
+      .map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+
+  function fmtDate(iso) {
+    const d = new Date(iso);
+    if (isNaN(d)) return iso;
+    return d.toISOString().replace('T', ' ').slice(0, 19) + ' UTC';
+  }
+
+  // ==================== TAB 1: ARCHIVE WIZARD ====================
+  const stage1 = document.getElementById('stage1');
+  const stage2 = document.getElementById('stage2');
+  const stage3 = document.getElementById('stage3');
+  const docZone = document.getElementById('docZone');
+  const docInput = document.getElementById('docInput');
+  const docName = document.getElementById('docName');
+  const docHash = document.getElementById('docHash');
+  const docHashCaption = document.getElementById('docHashCaption');
+  const toStage2 = document.getElementById('toStage2');
+  const useSample = document.getElementById('useSample');
+
+  let archiveFile = null;
+  let archiveHash = null;
+  let signers = [];
+
+  async function setArchiveFile(f) {
+    archiveFile = f;
+    docName.textContent = f.name + ' · ' + fmtSize(f.size);
+    docHash.textContent = 'Computing SHA-256…';
+    docHashCaption.style.display = 'none';
+    archiveHash = await sha256hex(f);
+    docHash.textContent = 'SHA-256: ' + archiveHash.slice(0, 6) + '…' + archiveHash.slice(-6);
+    docHash.title = archiveHash;
+    docHashCaption.style.display = 'block';
+    toStage2.disabled = false;
+  }
+
+  docInput.addEventListener('change', () => {
+    if (docInput.files[0]) setArchiveFile(docInput.files[0]);
+  });
+  wireDrop(docZone, f => setArchiveFile(f));
+
+  useSample.addEventListener('click', async (e) => {
+    e.preventDefault();
+    try {
+      const res = await fetch('/demo/pdf');
+      if (!res.ok) throw new Error('sample unavailable');
+      const blob = await res.blob();
+      setArchiveFile(new File([blob], 'sample-contract.pdf', { type: 'application/pdf' }));
+    } catch (err) {
+      docHash.textContent = 'Could not load sample: ' + err.message;
+    }
+  });
+
+  toStage2.addEventListener('click', () => {
+    stage1.classList.add('done');
+    document.getElementById('stage1Summary').textContent =
+      '✓ ' + archiveFile.name + ' · sha256 ' + archiveHash.slice(0, 6) + '…';
+    stage2.classList.remove('locked');
+  });
+
+  // Stage 2 — signers
+  const signerName = document.getElementById('signerName');
+  const signerEmail = document.getElementById('signerEmail');
+  const addSigner = document.getElementById('addSigner');
+  const signerList = document.getElementById('signerList');
+  const toStage3 = document.getElementById('toStage3');
+
+  function renderSignerCards() {
+    signerList.innerHTML = '';
+    signers.forEach((s, i) => {
+      const card = document.createElement('div');
+      card.className = 'signer-card';
+      const left = '<div><div class="sname">' + esc(s.name) + '</div>' +
+        '<div class="muted" style="font-size:12px;">' + esc(s.email) + '</div></div>';
+      const right = s.signedAt
+        ? '<div class="signed">✓ Signed at ' + esc(new Date(s.signedAt).toISOString().slice(11,19)) + ' UTC</div>'
+        : '<button class="sm" data-sign="' + i + '">Sign</button>';
+      card.innerHTML = left + right;
+      signerList.appendChild(card);
+    });
+    signerList.querySelectorAll('[data-sign]').forEach(btn =>
+      btn.addEventListener('click', () => openSignModal(Number(btn.dataset.sign))));
+    addSigner.disabled = signers.length >= 3;
+    toStage3.disabled = !signers.some(s => s.signedAt);
+  }
+
+  addSigner.addEventListener('click', () => {
+    const name = signerName.value.trim();
+    const email = signerEmail.value.trim();
+    if (!name || !email || signers.length >= 3) return;
+    signers.push({ name, email, signedAt: null });
+    signerName.value = '';
+    signerEmail.value = '';
+    renderSignerCards();
+  });
+
+  // Signature modal
+  const sigOverlay = document.getElementById('sigOverlay');
+  const sigPreview = document.getElementById('sigPreview');
+  const adoptSign = document.getElementById('adoptSign');
+  const cancelSign = document.getElementById('cancelSign');
+  let signingIndex = -1;
+
+  function openSignModal(i) {
+    signingIndex = i;
+    sigPreview.textContent = signers[i].name;
+    sigOverlay.classList.add('open');
+  }
+  function closeSignModal() {
+    sigOverlay.classList.remove('open');
+    signingIndex = -1;
+  }
+  cancelSign.addEventListener('click', closeSignModal);
+  sigOverlay.addEventListener('click', e => { if (e.target === sigOverlay) closeSignModal(); });
+  adoptSign.addEventListener('click', () => {
+    if (signingIndex < 0) return;
+    signers[signingIndex].signedAt = new Date().toISOString();
+    closeSignModal();
+    renderSignerCards();
+  });
+
+  toStage3.addEventListener('click', () => {
+    stage2.classList.add('done');
+    const names = signers.filter(s => s.signedAt).map(s => s.name).join(', ');
+    document.getElementById('stage2Summary').textContent = '✓ Signed by ' + names;
+    stage3.classList.remove('locked');
+    runArchive();
+  });
+
+  // Stage 3 — anchor (streaming NDJSON)
+  const anchorSteps = document.getElementById('anchorSteps');
+  const anchorDone = document.getElementById('anchorDone');
+  const anchorError = document.getElementById('anchorError');
+  const STEP_NAMES = {
+    hash: 'Document hashed',
+    merkle: 'Merkle root computed',
+    anchor: 'Anchoring to Algorand…',
+    sign: 'Proof bundle signed',
+    save: 'Saved to archive',
+    stateproof: 'State proof',
+  };
+
+  function renderAnchorLine(line) {
+    let row = anchorSteps.querySelector('[data-step="' + line.step + '"]');
+    if (!row) {
+      row = document.createElement('div');
+      row.className = 'step';
+      row.dataset.step = line.step;
+      anchorSteps.appendChild(row);
+    }
+    let iconClass, iconHtml, stateClass = '';
+    if (line.status === 'running') {
+      iconClass = 'running'; iconHtml = '<span class="spinner"></span>';
+    } else if (line.status === 'info') {
+      iconClass = 'info'; iconHtml = 'i'; stateClass = ' info';
+    } else if (line.status === 'error') {
+      iconClass = 'error'; iconHtml = '!';
+    } else {
+      iconClass = 'pass'; iconHtml = '✓';
+    }
+    row.className = 'step' + stateClass;
+    const name = line.step === 'anchor' && line.status === 'done'
+      ? 'Anchored' : (STEP_NAMES[line.step] || line.step);
+    const tag = line.status === 'info' ? '<span class="tag">Informational</span>' : '';
+    let detail = esc(line.detail || '');
+    const url = (line.detail || '').match(/https?:\/\/\S+/);
+    if (url) {
+      detail = esc(line.detail.replace(url[0], '')) +
+        '<a href="' + esc(url[0]) + '" target="_blank" rel="noopener">explorer ↗</a>';
+    }
+    row.innerHTML =
+      '<div class="icon ' + iconClass + '">' + iconHtml + '</div>' +
+      '<div class="body"><div class="name">' + esc(name) + tag + '</div>' +
+      '<div class="detail">' + detail + '</div></div>';
+  }
+
+  async function runArchive() {
+    anchorSteps.innerHTML = '';
+    anchorDone.innerHTML = '';
+    anchorError.style.display = 'none';
+
+    const fd = new FormData();
+    fd.append('pdf', archiveFile);
+    fd.append('signers', JSON.stringify(signers.filter(s => s.signedAt)));
+
+    try {
+      const res = await fetch('/api/archive', { method: 'POST', body: fd });
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buf = '';
+      let finalRecord = null;
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += decoder.decode(value, { stream: true });
+        const lines = buf.split('\n');
+        buf = lines.pop();
+        for (const l of lines) {
+          if (!l.trim()) continue;
+          const obj = JSON.parse(l);
+          if (obj.done) { finalRecord = obj.record; continue; }
+          if (obj.step === 'error') {
+            anchorError.textContent = 'Archive failed: ' + obj.detail;
+            anchorError.style.display = 'block';
+            continue;
+          }
+          renderAnchorLine(obj);
+        }
+      }
+      if (finalRecord) showArchiveDone(finalRecord);
+    } catch (err) {
+      anchorError.textContent = 'Network error: ' + err.message;
+      anchorError.style.display = 'block';
+    }
+  }
+
+  function showArchiveDone(record) {
+    const explorer = 'https://explorer.perawallet.app/tx/' + record.txId;
+    anchorDone.innerHTML =
+      '<div class="banner valid" style="margin-top:24px;">ARCHIVED ✓' +
+      '<span class="sub">Anchored to Algorand mainnet · round ' + esc(String(record.round)) + '</span></div>' +
+      '<div class="actions" style="margin-top:18px; flex-wrap:wrap;">' +
+      '<a class="demo" href="' + esc(explorer) + '" target="_blank" rel="noopener">View on explorer ↗</a>' +
+      '<a class="demo" href="/api/documents/' + esc(record.id) + '/bundle">Download proof bundle</a>' +
+      '<button class="verify" id="viewInArchive">View in archive →</button>' +
+      '</div>';
+    document.getElementById('viewInArchive').addEventListener('click', () => {
+      newlyArchivedId = record.id;
+      switchTab('documents');
+    });
+  }
+
+  // ==================== TAB 2: DOCUMENTS ====================
+  const docsContent = document.getElementById('docsContent');
+  let newlyArchivedId = null;
+
+  async function loadDocuments() {
+    docsContent.innerHTML = '<div class="muted">Loading…</div>';
+    let records;
+    try {
+      const res = await fetch('/api/documents');
+      records = await res.json();
+    } catch (err) {
+      docsContent.innerHTML = '<div class="net-error" style="display:block">Could not load archive: ' + esc(err.message) + '</div>';
+      return;
+    }
+    if (!records.length) {
+      docsContent.innerHTML = '<div class="empty">No documents archived yet · ' +
+        '<a class="link" id="goArchive">Archive your first document</a></div>';
+      document.getElementById('goArchive').addEventListener('click', () => switchTab('archive'));
+      return;
+    }
+    renderDocsTable(records);
+  }
+
+  function renderDocsTable(records) {
+    let html = '<table><thead><tr>' +
+      '<th>Document</th><th>Signers</th><th>Anchored</th><th>Algorand txn</th><th>Actions</th>' +
+      '</tr></thead><tbody>';
+    for (const r of records) {
+      const signerStr = r.signers && r.signers.length
+        ? r.signers.map(s => esc(s.name) + ' (' + new Date(s.signedAt).toISOString().slice(11,19) + ')').join(', ')
+        : '<span class="muted">—</span>';
+      const explorer = 'https://explorer.perawallet.app/tx/' + r.txId;
+      html += '<tr class="doc-row" data-id="' + esc(r.id) + '">' +
+        '<td>' + esc(r.filename) + '</td>' +
+        '<td>' + signerStr + '</td>' +
+        '<td>' + esc(fmtDate(r.archivedAt)) + '</td>' +
+        '<td><a href="' + esc(explorer) + '" target="_blank" rel="noopener">' + esc(r.txId.slice(0,12)) + '…</a></td>' +
+        '<td><div class="row-actions">' +
+          '<button class="sm" data-verify="' + esc(r.id) + '">Verify</button>' +
+          '<a href="/api/documents/' + esc(r.id) + '/bundle">Bundle ↓</a>' +
+          '<a href="/api/documents/' + esc(r.id) + '/pdf">PDF ↓</a>' +
+        '</div></td></tr>' +
+        '<tr class="drawer-row" data-drawer="' + esc(r.id) + '" style="display:none">' +
+          '<td class="drawer-cell" colspan="5"></td></tr>';
+    }
+    html += '</tbody></table>';
+    docsContent.innerHTML = html;
+
+    docsContent.querySelectorAll('[data-verify]').forEach(btn =>
+      btn.addEventListener('click', () => toggleDrawer(btn.dataset.verify)));
+
+    if (newlyArchivedId) {
+      const row = docsContent.querySelector('tr.doc-row[data-id="' + cssEscape(newlyArchivedId) + '"]');
+      if (row) { row.classList.add('highlight'); row.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+      newlyArchivedId = null;
+    }
+  }
+
+  function cssEscape(s) { return s.replace(/"/g, '\\"'); }
+
+  async function toggleDrawer(id) {
+    const drawerRow = docsContent.querySelector('tr.drawer-row[data-drawer="' + cssEscape(id) + '"]');
+    if (drawerRow.style.display !== 'none') { drawerRow.style.display = 'none'; return; }
+    drawerRow.style.display = '';
+    const cell = drawerRow.querySelector('.drawer-cell');
+    cell.innerHTML = '<div class="drawer"><div class="muted">Verifying… <span class="spinner"></span></div></div>';
+    await runDrawerVerify(id, cell, null);
+  }
+
+  async function runDrawerVerify(id, cell, pdfFile) {
+    const fd = new FormData();
+    if (pdfFile) fd.append('pdf', pdfFile);
+    let data;
+    try {
+      const res = await fetch('/api/documents/' + encodeURIComponent(id) + '/verify', { method: 'POST', body: fd });
+      data = await res.json();
+    } catch (err) {
+      cell.innerHTML = '<div class="drawer"><div class="net-error" style="display:block">Verify error: ' + esc(err.message) + '</div></div>';
+      return;
+    }
+    renderDrawer(id, cell, data);
+  }
+
+  function renderDrawer(id, cell, data) {
+    cell.innerHTML =
+      '<div class="drawer">' +
+        '<div class="section-title" style="margin-top:0;">Verification Steps</div>' +
+        '<div class="dsteps"></div>' +
+        '<div class="dbanner banner"></div>' +
+        '<div class="section-title">Test tamper detection</div>' +
+        '<label class="zone tamper-zone">' +
+          '<div class="label">Drop a modified PDF to test INVALID detection</div>' +
+          '<div class="hint">Click or drop a .pdf</div>' +
+          '<div class="filename tamper-name"></div>' +
+          '<input type="file" class="tamper-input" accept=".pdf,application/pdf" />' +
+        '</label>' +
+        '<div class="drawer-foot">Don\'t trust this server? Download the bundle and PDF and run the ' +
+          '<a class="link verify-indep">Verify Independently</a> tab.</div>' +
+      '</div>';
+
+    renderSteps(data.steps || [], cell.querySelector('.dsteps'));
+    renderBanner(data, cell.querySelector('.dbanner'));
+
+    const tamperZone = cell.querySelector('.tamper-zone');
+    const tamperInput = cell.querySelector('.tamper-input');
+    const tamperName = cell.querySelector('.tamper-name');
+    const onTamper = async (f) => {
+      tamperName.textContent = f.name;
+      cell.querySelector('.dsteps').innerHTML = '<div class="muted">Re-verifying with dropped PDF… <span class="spinner"></span></div>';
+      await runDrawerVerify(id, cell, f);
+    };
+    tamperInput.addEventListener('change', () => { if (tamperInput.files[0]) onTamper(tamperInput.files[0]); });
+    wireDrop(tamperZone, f => onTamper(f));
+
+    cell.querySelector('.verify-indep').addEventListener('click', () => prefillVerifyTab(id));
+  }
+
+  async function prefillVerifyTab(id) {
+    switchTab('verify');
+    netError.style.display = 'none';
+    try {
+      const [bRes, pRes] = await Promise.all([
+        fetch('/api/documents/' + encodeURIComponent(id) + '/bundle'),
+        fetch('/api/documents/' + encodeURIComponent(id) + '/pdf'),
+      ]);
+      const [bBlob, pBlob] = await Promise.all([bRes.blob(), pRes.blob()]);
+      bundleFile = new File([bBlob], id + '-bundle.json', { type: 'application/json' });
+      pdfFile = new File([pBlob], id + '.pdf', { type: 'application/pdf' });
+      syncState();
+    } catch (err) {
+      netError.textContent = 'Could not load files: ' + err.message;
+      netError.style.display = 'block';
+    }
+  }
+
+  // ==================== TAB 3: VERIFY INDEPENDENTLY ====================
   const bundleInput = document.getElementById('bundleInput');
   const pdfInput = document.getElementById('pdfInput');
   const bundleName = document.getElementById('bundleName');
@@ -240,8 +872,6 @@
   const signersEl = document.getElementById('signers');
   const banner = document.getElementById('banner');
 
-  // Store file references independently — input.files is read-only so
-  // drag-and-drop cannot assign to it; use these variables for FormData instead.
   let bundleFile = null;
   let pdfFile = null;
 
@@ -257,30 +887,15 @@
   pdfInput.addEventListener('change', () => {
     if (pdfInput.files[0]) { pdfFile = pdfInput.files[0]; syncState(); }
   });
-
-  function wireDrop(zoneId, onFile) {
-    const zone = document.getElementById(zoneId);
-    ['dragenter','dragover'].forEach(ev =>
-      zone.addEventListener(ev, e => { e.preventDefault(); zone.classList.add('drag'); }));
-    ['dragleave','drop'].forEach(ev =>
-      zone.addEventListener(ev, e => { e.preventDefault(); zone.classList.remove('drag'); }));
-    zone.addEventListener('drop', e => {
-      const f = e.dataTransfer.files[0];
-      if (f) { onFile(f); syncState(); }
-    });
-  }
-  wireDrop('bundleZone', f => { bundleFile = f; });
-  wireDrop('pdfZone', f => { pdfFile = f; });
+  wireDrop(document.getElementById('bundleZone'), f => { bundleFile = f; syncState(); });
+  wireDrop(document.getElementById('pdfZone'), f => { pdfFile = f; syncState(); });
 
   const demoBtn = document.getElementById('demoBtn');
   demoBtn.addEventListener('click', async () => {
     netError.style.display = 'none';
     demoBtn.disabled = true;
     try {
-      const [bundleRes, pdfRes] = await Promise.all([
-        fetch('/demo/bundle'),
-        fetch('/demo/pdf'),
-      ]);
+      const [bundleRes, pdfRes] = await Promise.all([fetch('/demo/bundle'), fetch('/demo/pdf')]);
       if (!bundleRes.ok || !pdfRes.ok) throw new Error('demo files unavailable');
       const [bundleBlob, pdfBlob] = await Promise.all([bundleRes.blob(), pdfRes.blob()]);
       bundleFile = new File([bundleBlob], 'sample-contract-bundle.json', { type: 'application/json' });
@@ -294,97 +909,11 @@
     }
   });
 
-  function esc(s) {
-    return String(s).replace(/[&<>"']/g, c =>
-      ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
-  }
-
-  function explorerLink(detail) {
-    // Step 4 detail looks like "<txId> (round N)"; link the txId.
-    const m = detail.match(/^([A-Z0-9]{20,})\s*(.*)$/);
-    if (!m) return esc(detail);
-    const txId = m[1];
-    return '<a href="https://explorer.perawallet.app/tx/' + esc(txId) +
-      '" target="_blank" rel="noopener">' + esc(txId) + '</a> ' + esc(m[2]);
-  }
-
-  const STEP_SUBTITLES = {
-    'ML-DSA-65 Signature': 'Receipt authenticity (quantum-safe signature)',
-    'PDF Hash': 'Document fingerprint match',
-    'Merkle Inclusion': 'Document is in the sealed batch',
-    'Algorand Anchor': 'Public ledger record confirmed',
-    'State Proof': 'Quantum-safe network attestation (~17 min after anchoring)',
-  };
-
-  function renderSteps(steps) {
-    stepsEl.innerHTML = '';
-    for (const s of steps) {
-      const isInfo = s.name === 'State Proof';
-      const row = document.createElement('div');
-      let iconClass, iconChar, stateClass;
-      if (isInfo) {
-        iconClass = 'info'; iconChar = 'i'; stateClass = ' info';
-      } else if (s.skipped) {
-        iconClass = 'skip'; iconChar = '–'; stateClass = ' skip';
-      } else if (s.error) {
-        iconClass = 'error'; iconChar = '!'; stateClass = '';
-      } else if (s.passed) {
-        iconClass = 'pass'; iconChar = '✓'; stateClass = '';
-      } else {
-        iconClass = 'fail'; iconChar = '✗'; stateClass = '';
-      }
-      row.className = 'step' + stateClass;
-      const tag = isInfo ? '<span class="tag">Informational</span>' : '';
-      const subtitle = STEP_SUBTITLES[s.name]
-        ? '<div class="subname">' + esc(STEP_SUBTITLES[s.name]) + '</div>' : '';
-      const detailHtml = s.name === 'Algorand Anchor' && s.passed
-        ? explorerLink(s.detail) : esc(s.detail);
-      row.innerHTML =
-        '<div class="icon ' + iconClass + '">' + iconChar + '</div>' +
-        '<div class="body"><div class="name">' + esc(s.name) + tag + '</div>' +
-        subtitle +
-        '<div class="detail">' + detailHtml + '</div></div>';
-      stepsEl.appendChild(row);
-    }
-  }
-
-  function renderSigners(signers) {
-    if (!signers || !signers.length) { signersWrap.style.display = 'none'; return; }
-    signersWrap.style.display = 'block';
-    signersEl.innerHTML = '';
-    for (const s of signers) {
-      const el = document.createElement('div');
-      el.className = 'signer';
-      el.innerHTML =
-        '<div class="sname">' + esc(s.name) + '</div>' +
-        '<div class="smeta">' + esc(s.email) + ' — signed ' + esc(s.signedAt) + '</div>';
-      signersEl.appendChild(el);
-    }
-  }
-
-  function renderBanner(valid, hasSkipped, operationalError) {
-    if (valid) {
-      banner.className = 'banner valid';
-      const sub = hasSkipped
-        ? 'Original document not verified — upload the PDF to complete verification'
-        : 'On-chain record confirmed. DocuSign attestation verified offline.';
-      banner.innerHTML = 'VALID ✓ — record confirmed<span class="sub">' + sub + '</span>';
-      return;
-    }
-    if (operationalError) {
-      banner.className = 'banner warn';
-      banner.innerHTML = 'COULD NOT VERIFY<span class="sub">Network or configuration error — try again or check the server.</span>';
-      return;
-    }
-    banner.className = 'banner invalid';
-    banner.innerHTML = 'INVALID ✗<span class="sub">One or more verification checks failed.</span>';
-  }
-
   verifyBtn.addEventListener('click', async () => {
     netError.style.display = 'none';
     results.style.display = 'none';
     verifyBtn.disabled = true;
-    spinner.style.display = 'block';
+    spinner.style.display = 'inline-block';
 
     const fd = new FormData();
     fd.append('bundle', bundleFile);
@@ -398,13 +927,11 @@
         netError.style.display = 'block';
         return;
       }
-      const steps = data.steps || [];
-      const hasSkipped = steps.some(s => s.skipped);
-      const failing = steps.filter(s => s.name !== 'State Proof' && !s.passed);
-      const operationalError = failing.length > 0 && failing.every(s => s.error);
-      renderSteps(steps);
-      renderSigners(data.signers || []);
-      renderBanner(!!data.valid, hasSkipped, operationalError);
+      renderSteps(data.steps || [], stepsEl);
+      const sg = data.signers || [];
+      signersWrap.style.display = sg.length ? 'block' : 'none';
+      renderSigners(sg, signersEl);
+      renderBanner(data, banner);
       results.style.display = 'block';
     } catch (err) {
       netError.textContent = 'Network error: ' + err.message;
