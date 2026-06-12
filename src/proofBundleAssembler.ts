@@ -24,6 +24,11 @@ export function assembleBundle(params: AssembleParams): ProofBundle {
   const merkleRoot = getMerkleRoot(params.merkleTree);
   const merkleProof = getMerkleProof(params.merkleTree, documentHash);
 
+  // Only include a ledger-backed timestamp. If neither the anchor round time nor
+  // an explicit value is available, omit the field entirely rather than sign a
+  // local-clock fallback that is not provable against the chain.
+  const blockTimestamp = params.anchorTime ?? params.blockTimestamp;
+
   const unsigned: Omit<ProofBundle, 'signature'> = {
     protocol: 'pqva/1',
     envelopeId: params.envelopeId,
@@ -33,7 +38,7 @@ export function assembleBundle(params: AssembleParams): ProofBundle {
     merkleProof,
     algorandTxnId: params.txId,
     algorandRound: params.confirmedRound,
-    blockTimestamp: params.anchorTime ?? params.blockTimestamp ?? new Date().toISOString(),
+    ...(blockTimestamp ? { blockTimestamp } : {}),
     stateProofRound: params.stateProof.stateProofRound,
     signingMetadata: { signers: params.signers ?? [] },
     docusignSigners: params.docusignSigners ?? [],

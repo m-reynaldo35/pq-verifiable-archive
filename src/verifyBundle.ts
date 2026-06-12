@@ -4,7 +4,7 @@ import { hashDocument } from './documentHasher.js';
 import { verifyMerkleProof } from './merkleBatcher.js';
 import {
   verifyBundleSignature,
-  getPublicKeyBytes,
+  resolvePublicKeyBytes,
   ProofBundle,
   DocuSignSigner,
 } from './bundleSigner.js';
@@ -18,6 +18,9 @@ export interface VerifyStep {
   detail: string;
   skipped?: boolean;
   error?: boolean;
+  // Informational steps (e.g. the state proof) never block the overall `valid`
+  // verdict — they report coverage status only.
+  informational?: boolean;
 }
 
 export interface VerifyResult {
@@ -30,6 +33,18 @@ export interface VerifyResult {
 interface IndexerTransaction {
   note?: Uint8Array;
   roundTime?: number;
+}
+
+// Minimum fields a JSON object must carry to be treated as a pqva/1 bundle.
+function validateBundleSchema(bundle: ProofBundle): string[] {
+  const missing: string[] = [];
+  if ((bundle as { protocol?: unknown }).protocol !== 'pqva/1') missing.push('protocol (expected "pqva/1")');
+  if (!bundle.signature) missing.push('signature');
+  if (!bundle.algorandTxnId) missing.push('algorandTxnId');
+  if (!bundle.merkleRoot) missing.push('merkleRoot');
+  if (!bundle.documentHash) missing.push('documentHash');
+  if ((bundle as { algorithm?: unknown }).algorithm !== 'ml-dsa-65') missing.push('algorithm (expected "ml-dsa-65")');
+  return missing;
 }
 
 function getIndexer(): algosdk.Indexer {
@@ -49,16 +64,28 @@ function sha256hex(data: Uint8Array): string {
   return createHash('sha256').update(Buffer.from(data)).digest('hex');
 }
 
-// Sub-check for step 1: confirm the env public key matches the pkHash recorded
-// in the on-chain key registration transaction note.
+// Sub-check for step 1: confirm the public key used to verify the signature
+// (the one embedded in the bundle, or the env key for legacy bundles) matches
+// the pkHash recorded in the on-chain key registration transaction note. This
+// is what lets a verifier pin only the registration txn ID (or the Algorand
+// address) rather than the full key.
 // Returns: matched | mismatched | unavailable (network/parse failure).
+//
+// TRUST MODEL NOTE: `bundle.docusignKeyRegistrationTxnId` is currently read from
+// the bundle itself, which means a forger who controls the bundle could point it
+// at their own registration. For a PoC this is acceptable, but in production the
+// registration txn ID (or the registering Algorand address) MUST be pinned in
+// the verifier out-of-band and NOT trusted from the bundle. See the caller for
+// where this would be enforced.
 async function checkKeyRegistration(
   bundle: ProofBundle,
+  // In production, pass a pinned txn ID here instead of reading from the bundle.
+  registrationTxnId: string = bundle.docusignKeyRegistrationTxnId,
 ): Promise<'matched' | 'mismatched' | 'unavailable'> {
-  if (!bundle.docusignKeyRegistrationTxnId) return 'unavailable';
+  if (!registrationTxnId) return 'unavailable';
   let note: string;
   try {
-    const txn = await fetchTransaction(bundle.docusignKeyRegistrationTxnId);
+    const txn = await fetchTransaction(registrationTxnId);
     if (!txn.note) return 'unavailable';
     note = Buffer.from(txn.note).toString('utf8');
   } catch {
@@ -71,7 +98,7 @@ async function checkKeyRegistration(
     return 'unavailable';
   }
   if (typeof pkHash !== 'string') return 'unavailable';
-  const expected = 'sha256:' + sha256hex(getPublicKeyBytes());
+  const expected = 'sha256:' + sha256hex(resolvePublicKeyBytes(bundle));
   return pkHash === expected ? 'matched' : 'mismatched';
 }
 
@@ -82,15 +109,37 @@ export async function verifyBundle(
   const steps: VerifyStep[] = [];
   let operationalError = false;
 
+  // Schema gate — reject anything that is not a recognisable pqva/1 bundle
+  // before running any checks, so we don't render "undefined" steps.
+  const missing = validateBundleSchema(bundle);
+  if (missing.length > 0) {
+    return {
+      valid: false,
+      steps: [
+        {
+          name: 'Bundle Schema',
+          passed: false,
+          detail: `Not a valid pqva/1 proof bundle — missing fields: ${missing.join(', ')}`,
+        },
+      ],
+      signers: bundle.docusignSigners ?? [],
+      operationalError: false,
+    };
+  }
+
+  // The public key may be embedded in the bundle (preferred) or supplied via
+  // the environment for legacy bundles. Only error if neither is available.
+  const hasKey = Boolean(bundle.mldsaPublicKey) || Boolean(process.env.DOCUSIGN_MLDSA_PUBLIC_KEY);
+
   // Step 1 — ML-DSA-65 signature over canonical JSON, plus on-chain key
   // registration confirmation.
-  if (!process.env.DOCUSIGN_MLDSA_PUBLIC_KEY) {
+  if (!hasKey) {
     operationalError = true;
     steps.push({
       name: 'ML-DSA-65 Signature',
       passed: false,
       error: true,
-      detail: 'DOCUSIGN_MLDSA_PUBLIC_KEY not configured',
+      detail: 'no ML-DSA public key available (not embedded in bundle and DOCUSIGN_MLDSA_PUBLIC_KEY not set)',
     });
   } else {
     try {
@@ -182,11 +231,30 @@ export async function verifyBundle(
       typeof txn.roundTime === 'number'
         ? new Date(txn.roundTime * 1000).toISOString()
         : undefined;
+
+    // Cross-check the bundle's claimed blockTimestamp against the on-chain
+    // round time. A large drift suggests the timestamp was not derived from the
+    // ledger (warn only — never fails a valid anchor).
+    let timeWarning = '';
+    if (
+      anchored &&
+      bundle.blockTimestamp &&
+      typeof txn.roundTime === 'number'
+    ) {
+      const claimed = Date.parse(bundle.blockTimestamp);
+      if (!Number.isNaN(claimed)) {
+        const driftSec = Math.abs(claimed - txn.roundTime * 1000) / 1000;
+        if (driftSec > 60) {
+          timeWarning = ` · warning: bundle blockTimestamp differs from on-chain round time by ${Math.round(driftSec)}s`;
+        }
+      }
+    }
+
     steps.push({
       name: 'Algorand Anchor',
       passed: anchored,
       detail: anchored
-        ? `${bundle.algorandTxnId} (round ${bundle.algorandRound}${anchorTime ? `, ${anchorTime}` : ''})`
+        ? `${bundle.algorandTxnId} (round ${bundle.algorandRound}${anchorTime ? `, ${anchorTime}` : ''})${timeWarning}`
         : `anchor note does not contain merkleRoot ${bundle.merkleRoot}`,
     });
   } catch (e) {
@@ -199,27 +267,27 @@ export async function verifyBundle(
     });
   }
 
-  // Step 5 — state proof coverage (informational, never blocks valid).
+  // Step 5 — Falcon-512 state proof coverage (informational, never blocks valid).
   try {
     const proof = await getStateProofForRound(bundle.algorandRound);
     steps.push({
-      name: 'State Proof',
+      name: 'Falcon-512 State Proof',
       passed: true,
+      informational: true,
       detail: proof
-        ? `confirmed (round ${proof.stateProofRound})`
-        : 'pending (not yet generated)',
+        ? `confirmed — Falcon-512 state proof covers round ${proof.stateProofRound} (PQ-safe finality)`
+        : 'pending — not yet generated (check back in ~1 hour)',
     });
   } catch {
     steps.push({
-      name: 'State Proof',
+      name: 'Falcon-512 State Proof',
       passed: true,
+      informational: true,
       detail: 'pending — ledger API temporarily unavailable',
     });
   }
 
-  const valid = steps
-    .filter(s => s.name !== 'State Proof')
-    .every(s => s.passed);
+  const valid = steps.filter(s => !s.informational).every(s => s.passed);
 
   return {
     valid,

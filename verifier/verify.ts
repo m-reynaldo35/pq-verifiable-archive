@@ -49,8 +49,8 @@ async function main() {
   const result = await verifyBundle(bundle, pdfBuffer);
 
   for (const step of result.steps) {
-    if (step.name === 'State Proof') {
-      console.log(`  state proof coverage: ${step.detail}`);
+    if (step.informational) {
+      console.log(`  ${step.name.toLowerCase()}: ${step.detail}`);
     } else if (step.skipped) {
       console.log(`– ${step.name}: ${step.detail}`);
     } else if (step.error) {
@@ -71,7 +71,8 @@ async function main() {
 
   if (result.valid) {
     console.log('\nVALID ✓');
-    console.log(`        Document integrity proven as of ${bundle.blockTimestamp}.`);
+    const asOf = bundle.blockTimestamp ? ` as of ${bundle.blockTimestamp}` : '';
+    console.log(`        Document integrity proven${asOf}.`);
     console.log('        AlgoNode confirms on-chain record. DocuSign attestation verified offline.');
     process.exit(EXIT_VALID);
   }

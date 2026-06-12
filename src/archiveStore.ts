@@ -1,11 +1,6 @@
 import { mkdir, readFile, writeFile, rename, copyFile, access } from 'fs/promises';
 import path from 'node:path';
-import os from 'node:os';
 import { ProofBundle } from './bundleSigner.js';
-
-const LOCAL_BUNDLES_DIR =
-  process.env.PROOF_BUNDLES_DIR ??
-  path.join(os.homedir(), 'Downloads', 'proof-bundles');
 
 export interface ArchiveRecord {
   id: string;
@@ -15,7 +10,8 @@ export interface ArchiveRecord {
   signers: { name: string; email: string; signedAt: string }[];
   txId: string;
   round: number;
-  blockTimestamp: string;
+  // May be absent when the ledger round time could not be fetched.
+  blockTimestamp?: string;
   stateProofRound: number;
   archivedAt: string;
 }
@@ -67,7 +63,7 @@ async function seedSample(): Promise<void> {
     round: bundle.algorandRound,
     blockTimestamp: bundle.blockTimestamp,
     stateProofRound: bundle.stateProofRound,
-    archivedAt: bundle.blockTimestamp,
+    archivedAt: bundle.blockTimestamp ?? new Date().toISOString(),
   };
   records = [record];
   await writeIndexAtomic();
@@ -77,8 +73,6 @@ export async function initArchive(): Promise<void> {
   await mkdir(ARCHIVE_DIR, { recursive: true });
   await mkdir(BUNDLES_DIR, { recursive: true });
   await mkdir(PDFS_DIR, { recursive: true });
-  await mkdir(LOCAL_BUNDLES_DIR, { recursive: true });
-  process.stderr.write(`info: proof bundles will be saved to ${LOCAL_BUNDLES_DIR}\n`);
 
   if (await exists(INDEX_PATH)) {
     const raw = await readFile(INDEX_PATH, 'utf8');
@@ -116,12 +110,6 @@ export async function saveRecord(
   await rename(bundleTmp, getBundlePath(record.id));
   await writeFile(pdfTmp, pdfBuffer);
   await rename(pdfTmp, getPdfPath(record.id));
-
-  // Also save to ~/Downloads/proof-bundles/ for easy access
-  const localBundleName = `${record.title}-bundle.json`;
-  const localBundlePath = path.join(LOCAL_BUNDLES_DIR, localBundleName);
-  await writeFile(localBundlePath, bundleJson, 'utf8');
-  process.stderr.write(`info: bundle saved to ${localBundlePath}\n`);
 
   records = records.filter(r => r.id !== record.id);
   records.push(record);

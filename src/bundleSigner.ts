@@ -21,7 +21,9 @@ export interface ProofBundle {
   merkleProof: string[];
   algorandTxnId: string;
   algorandRound: number;
-  blockTimestamp: string;
+  // Omitted when the ledger round time could not be fetched — we never sign a
+  // local-clock fallback, since the timestamp would not be ledger-backed.
+  blockTimestamp?: string;
   stateProofRound: number;
   signingMetadata: {
     signers: SignerMetadata[];
@@ -29,6 +31,11 @@ export interface ProofBundle {
   docusignSigners: DocuSignSigner[];
   docusignKeyRegistrationTxnId: string;
   algorithm: 'ml-dsa-65';
+  // Hex-encoded ML-DSA-65 public key, embedded so a verifier in 2050 can check
+  // the signature without already holding the key. Its SHA-256 is cross-checked
+  // against the on-chain pkHash registration (see verifyBundle.checkKeyRegistration).
+  // Part of the canonical signed payload — set BEFORE signing.
+  mldsaPublicKey?: string;
   signature: string;
 }
 
@@ -46,17 +53,34 @@ function requireEnvHex(name: string): Uint8Array {
 
 export function signBundle(bundle: Omit<ProofBundle, 'signature'>): ProofBundle {
   const secretKey = requireEnvHex('DOCUSIGN_MLDSA_PRIVATE_KEY');
-  const message = canonicalBytes(bundle);
+  // Embed the public key so it is part of the canonical signed payload. A
+  // verifier can then check the signature against the bundle alone and confirm
+  // the key against the on-chain pkHash registration.
+  const withKey = {
+    ...bundle,
+    mldsaPublicKey: Buffer.from(getPublicKeyBytes()).toString('hex'),
+  };
+  const message = canonicalBytes(withKey);
   const signature = ml_dsa65.sign(message, secretKey);
-  return { ...bundle, signature: Buffer.from(signature).toString('hex') };
+  return { ...withKey, signature: Buffer.from(signature).toString('hex') };
 }
 
 export function getPublicKeyBytes(): Uint8Array {
   return requireEnvHex('DOCUSIGN_MLDSA_PUBLIC_KEY');
 }
 
+// Resolve the public key used to verify a bundle: prefer the key embedded in the
+// bundle (self-describing, works for archival verification), fall back to the
+// environment variable for older bundles that predate the embedded field.
+export function resolvePublicKeyBytes(bundle: ProofBundle): Uint8Array {
+  if (bundle.mldsaPublicKey) {
+    return Uint8Array.from(Buffer.from(bundle.mldsaPublicKey, 'hex'));
+  }
+  return getPublicKeyBytes();
+}
+
 export function verifyBundleSignature(bundle: ProofBundle): boolean {
-  const publicKey = getPublicKeyBytes();
+  const publicKey = resolvePublicKeyBytes(bundle);
   const { signature, ...unsigned } = bundle;
   const message = canonicalBytes(unsigned);
   const sigBytes = Uint8Array.from(Buffer.from(signature, 'hex'));

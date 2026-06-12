@@ -32,6 +32,22 @@ function slugify(name: string): string {
     .slice(0, 40) || 'document';
 }
 
+// Reject malformed signer records before they reach the bundle / index.json.
+// Returns an error message, or null if all signers are valid.
+function validateSigners(signers: DocuSignSigner[]): string | null {
+  for (let i = 0; i < signers.length; i++) {
+    const s = signers[i] as Partial<DocuSignSigner> | null;
+    const where = `signer ${i + 1}`;
+    if (!s || typeof s !== 'object') return `${where} is not an object`;
+    if (typeof s.name !== 'string' || s.name.trim() === '') return `${where} has an invalid name`;
+    if (typeof s.email !== 'string' || !s.email.includes('@')) return `${where} has an invalid email`;
+    if (typeof s.signedAt !== 'string' || Number.isNaN(Date.parse(s.signedAt))) {
+      return `${where} has an invalid signedAt date`;
+    }
+  }
+  return null;
+}
+
 const PORT = Number(process.env.PORT ?? 3000);
 
 const app = express();
@@ -97,6 +113,17 @@ app.post('/api/archive', upload.single('pdf'), async (req, res) => {
     signers = JSON.parse((req.body as { signers?: string }).signers ?? '[]') as DocuSignSigner[];
   } catch {
     res.status(400).json({ error: 'signers field is not valid JSON' });
+    return;
+  }
+
+  // Validate each signer to keep poisoned data out of index.json / bundles.
+  if (!Array.isArray(signers)) {
+    res.status(400).json({ error: 'signers must be an array' });
+    return;
+  }
+  const signerError = validateSigners(signers);
+  if (signerError) {
+    res.status(400).json({ error: signerError });
     return;
   }
 

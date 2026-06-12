@@ -8,7 +8,9 @@ const NOTE_LIMIT_BYTES = 1024;
 export interface AnchorResult {
   txId: string;
   confirmedRound: number;
-  blockTime: string;
+  // Undefined when the ledger round time could not be fetched after retries —
+  // callers must omit the timestamp rather than substitute a local clock.
+  blockTime?: string;
 }
 
 async function fetchBlockTime(txId: string): Promise<string> {
@@ -25,17 +27,22 @@ async function fetchBlockTime(txId: string): Promise<string> {
   return new Date(roundTime * 1000).toISOString();
 }
 
-// The indexer can lag a couple of rounds behind algod; retry briefly before
-// falling back to the local clock.
+// The indexer can lag a couple of rounds behind algod; retry briefly. If it is
+// still unavailable, throw rather than fall back to the local clock — we must
+// never sign a timestamp that is not ledger-backed.
 async function fetchBlockTimeWithRetry(txId: string): Promise<string> {
+  let lastError: unknown;
   for (let attempt = 0; attempt < 4; attempt++) {
     try {
       return await fetchBlockTime(txId);
-    } catch {
+    } catch (e) {
+      lastError = e;
       await new Promise(resolve => setTimeout(resolve, 1500));
     }
   }
-  return new Date().toISOString();
+  throw new Error(
+    `could not fetch ledger round time for ${txId} after retries: ${(lastError as Error)?.message ?? 'unknown'}`,
+  );
 }
 
 function envelopeIdsDigest(envelopeIds: string[]): string {
@@ -84,7 +91,15 @@ export async function anchorToAlgorand(
   const result = await algosdk.waitForConfirmation(algod, txid, 4);
   const confirmedRound = Number(result.confirmedRound);
 
-  const blockTime = await fetchBlockTimeWithRetry(txid);
+  // The anchor itself is confirmed; only the human-readable timestamp may be
+  // missing. Omit it rather than fail the anchor or sign a local-clock value.
+  let blockTime: string | undefined;
+  try {
+    blockTime = await fetchBlockTimeWithRetry(txid);
+  } catch (e) {
+    process.stderr.write(`warn: ${(e as Error).message} — omitting blockTimestamp\n`);
+    blockTime = undefined;
+  }
 
   return { txId: txid, confirmedRound, blockTime };
 }

@@ -7,7 +7,7 @@ const STEP_SUBTITLES = {
   'PDF Hash': 'Document fingerprint match',
   'Merkle Inclusion': 'Document is in the sealed batch',
   'Algorand Anchor': 'Public ledger record confirmed',
-  'State Proof': 'Quantum-safe network attestation (~17 min after anchoring)',
+  'Falcon-512 State Proof': 'Quantum-safe network attestation (~1 hour after anchoring)',
 };
 
 function esc(s) {
@@ -27,7 +27,7 @@ function explorerLink(detail) {
 function renderSteps(steps, container) {
   container.innerHTML = '';
   for (const s of steps) {
-    const isInfo = s.name === 'State Proof';
+    const isInfo = s.informational || s.name === 'State Proof' || s.name === 'Falcon-512 State Proof';
     const row = document.createElement('div');
     let iconClass, iconChar, stateClass;
     if (isInfo) {
@@ -59,7 +59,8 @@ function renderSteps(steps, container) {
 function renderBanner(result, container) {
   const steps = result.steps || [];
   const hasSkipped = steps.some(s => s.skipped);
-  const failing = steps.filter(s => s.name !== 'State Proof' && !s.passed);
+  const isInfo = s => s.informational || s.name === 'State Proof' || s.name === 'Falcon-512 State Proof';
+  const failing = steps.filter(s => !isInfo(s) && !s.passed);
   const operationalError = failing.length > 0 && failing.every(s => s.error);
 
   if (result.valid) {
