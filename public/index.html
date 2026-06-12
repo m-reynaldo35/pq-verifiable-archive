@@ -56,6 +56,7 @@
 
   .zones { display: flex; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
   .zone {
+    display: block;
     flex: 1 1 280px;
     background: var(--panel);
     border: 1px dashed var(--border);
@@ -64,8 +65,10 @@
     transition: border-color 0.15s, background 0.15s;
     cursor: pointer;
     position: relative;
+    user-select: none;
   }
   .zone:hover, .zone.drag { border-color: var(--blue); background: var(--panel-2); }
+  .zone > * { pointer-events: none; }
   .zone .label { font-size: 13px; color: var(--muted); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 1px; }
   .zone .label .req { color: var(--red); }
   .zone .label .opt { color: var(--grey); }
@@ -366,12 +369,12 @@
         </div>
       </div>
       <div class="stage-body">
-        <label class="zone" id="docZone">
+        <div class="zone" id="docZone">
           <div class="label">Drop a contract PDF</div>
           <div class="hint" data-default>Click or drop a .pdf</div>
           <div class="filename" id="docName"></div>
           <input type="file" id="docInput" accept=".pdf,application/pdf" />
-        </label>
+        </div>
         <div class="hash-line" id="docHash"></div>
         <div class="caption" id="docHashCaption" style="display:none">This fingerprint is all that ever leaves your document — the PDF itself is never sent to the blockchain.</div>
         <div style="margin-top:14px;">
@@ -507,11 +510,14 @@
   tabs.forEach(t => t.addEventListener('click', () => switchTab(t.dataset.tab)));
 
   function wireDrop(zone, onFile) {
-    ['dragenter','dragover'].forEach(ev =>
-      zone.addEventListener(ev, e => { e.preventDefault(); zone.classList.add('drag'); }));
-    ['dragleave','drop'].forEach(ev =>
-      zone.addEventListener(ev, e => { e.preventDefault(); zone.classList.remove('drag'); }));
+    let depth = 0;
+    zone.addEventListener('dragenter', e => { e.preventDefault(); if (++depth === 1) zone.classList.add('drag'); });
+    zone.addEventListener('dragleave', e => { e.preventDefault(); if (--depth === 0) zone.classList.remove('drag'); });
+    zone.addEventListener('dragover', e => e.preventDefault());
     zone.addEventListener('drop', e => {
+      e.preventDefault();
+      depth = 0;
+      zone.classList.remove('drag');
       const f = e.dataTransfer.files[0];
       if (f) onFile(f);
     });
@@ -567,6 +573,7 @@
   docInput.addEventListener('change', () => {
     if (docInput.files[0]) setArchiveFile(docInput.files[0]);
   });
+  docZone.addEventListener('click', () => docInput.click());
   wireDrop(docZone, f => setArchiveFile(f));
 
   useSample.addEventListener('click', async (e) => {
