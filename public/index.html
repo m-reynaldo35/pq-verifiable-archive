@@ -712,11 +712,21 @@
     anchorDone.innerHTML =
       '<div class="banner valid" style="margin-top:24px;">ARCHIVED ✓' +
       '<span class="sub">Anchored to Algorand mainnet · round ' + esc(String(record.round)) + '</span></div>' +
+      '<p style="font-size:13px;color:var(--green);margin:12px 0 0;">Proof bundle saved to <strong>~/Downloads/proof-bundles/</strong></p>' +
       '<div class="actions" style="margin-top:18px; flex-wrap:wrap;">' +
       '<a class="demo" href="' + esc(explorer) + '" target="_blank" rel="noopener">View on explorer ↗</a>' +
-      '<a class="demo" href="/api/documents/' + esc(record.id) + '/bundle">Download proof bundle</a>' +
+      '<a class="demo" href="/api/documents/' + esc(record.id) + '/bundle" id="bundleDownload">Download proof bundle</a>' +
       '<button class="verify" id="viewInArchive">View in archive →</button>' +
       '</div>';
+
+    // Auto-trigger download so bundle lands in browser Downloads automatically
+    const a = document.createElement('a');
+    a.href = '/api/documents/' + encodeURIComponent(record.id) + '/bundle';
+    a.download = record.title + '-bundle.json';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+
     document.getElementById('viewInArchive').addEventListener('click', () => {
       newlyArchivedId = record.id;
       switchTab('documents');
