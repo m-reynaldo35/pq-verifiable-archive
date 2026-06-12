@@ -125,6 +125,121 @@ const docs: DocSpec[] = [
       },
     ],
   },
+  {
+    filename: 'data-processing-agreement.pdf',
+    title: 'DATA PROCESSING AGREEMENT',
+    parties: ['CloudBase Technologies Ltd', 'Apex Retail Group PLC'],
+    clauses: [
+      {
+        heading: '1. Definitions and Scope',
+        body: 'This Data Processing Agreement ("DPA") governs the processing of personal data by CloudBase Technologies Ltd ("Processor") on behalf of Apex Retail Group PLC ("Controller") in connection with the cloud infrastructure services provided under the Master Services Agreement dated on the Effective Date. Terms used herein shall have the meanings given in the UK General Data Protection Regulation and the Data Protection Act 2018.',
+      },
+      {
+        heading: '2. Processor Obligations',
+        body: 'The Processor shall: (a) process personal data only on documented instructions from the Controller; (b) ensure persons authorised to process personal data are subject to obligations of confidentiality; (c) implement appropriate technical and organisational measures to ensure a level of security appropriate to the risk; and (d) not engage sub-processors without prior written authorisation from the Controller.',
+      },
+      {
+        heading: '3. Data Subject Rights',
+        body: 'The Processor shall assist the Controller, by appropriate technical and organisational measures, in fulfilling the Controller\'s obligations to respond to requests for exercising data subjects\' rights under Chapter III of the UK GDPR, including rights of access, rectification, erasure, restriction, portability, and objection. The Processor shall notify the Controller within 48 hours of receiving any such request.',
+      },
+      {
+        heading: '4. Data Breach Notification',
+        body: 'In the event of a personal data breach, the Processor shall notify the Controller without undue delay and in any event within 24 hours of becoming aware of the breach. Such notification shall include the nature of the breach, categories and approximate numbers of data subjects and records concerned, and measures taken or proposed to address the breach.',
+      },
+    ],
+  },
+  {
+    filename: 'share-purchase-agreement.pdf',
+    title: 'SHARE PURCHASE AGREEMENT',
+    parties: ['Harlow Capital Partners Ltd', 'Greenfield Biotech Ltd'],
+    clauses: [
+      {
+        heading: '1. Sale and Purchase',
+        body: 'Subject to the terms and conditions of this Agreement, the Seller agrees to sell, and the Buyer agrees to purchase, 100% of the issued share capital of Greenfield Biotech Ltd ("the Company"), comprising 10,000,000 ordinary shares of £0.01 each ("the Shares"), free from all encumbrances and together with all rights attaching thereto as at Completion.',
+      },
+      {
+        heading: '2. Consideration',
+        body: 'The aggregate consideration for the Shares shall be £12,500,000 ("the Purchase Price"), to be paid as follows: (a) £10,000,000 in cash on Completion; (b) £1,500,000 deferred for 12 months subject to the Company achieving EBITDA of not less than £2,000,000 in the first full financial year post-Completion; and (c) £1,000,000 released upon grant of the pending patent applications listed in Schedule 2.',
+      },
+      {
+        heading: '3. Completion',
+        body: 'Completion shall take place at the offices of the Buyer\'s solicitors on the date falling five (5) Business Days after satisfaction or waiver of all Conditions Precedent set out in Schedule 1. At Completion, the Seller shall deliver to the Buyer stock transfer forms, original share certificates, and all corporate records of the Company.',
+      },
+      {
+        heading: '4. Warranties and Indemnities',
+        body: 'The Seller gives the Warranties set out in Schedule 3 as at the date of this Agreement and as at Completion. Any claim under the Warranties must be brought within 24 months of Completion, save for Tax Warranties which must be brought within seven years. The Seller\'s aggregate liability for Warranty claims shall not exceed the Purchase Price.',
+      },
+    ],
+  },
+  {
+    filename: 'commercial-lease-agreement.pdf',
+    title: 'COMMERCIAL LEASE AGREEMENT',
+    parties: ['Westbrook Property Investments Ltd', 'Horizon Digital Studio Ltd'],
+    clauses: [
+      {
+        heading: '1. Demise and Term',
+        body: 'The Landlord demises to the Tenant the premises known as Suite 4A, 22 Canary Wharf, London E14 5AB ("the Premises"), comprising approximately 3,200 square feet of net lettable area, for a term of five (5) years commencing on the Completion Date, with an option to renew for a further term of five years on the same terms save as to rent.',
+      },
+      {
+        heading: '2. Rent and Review',
+        body: 'The Tenant shall pay to the Landlord an annual rent of £128,000, payable quarterly in advance on the usual quarter days. The rent shall be reviewed upwards only on the third anniversary of the Completion Date to the higher of the passing rent and the open market rent as determined by a chartered surveyor in accordance with the RICS Valuation Standards.',
+      },
+      {
+        heading: '3. Permitted Use',
+        body: 'The Tenant shall use the Premises solely for the purpose of a creative digital studio, software development office, and ancillary uses within Class E of the Town and Country Planning (Use Classes) Order 1987 (as amended). The Tenant shall not use the Premises for any purpose that would cause nuisance or annoyance to the Landlord or neighbouring tenants.',
+      },
+      {
+        heading: '4. Repairing Obligations',
+        body: 'The Tenant shall keep and maintain the interior of the Premises, including all fixtures and fittings, in good and substantial repair and condition throughout the Term and shall yield up the Premises at the end of the Term in such repair and condition, fair wear and tear excepted. The Landlord is responsible for the exterior, structure, and common parts of the building.',
+      },
+    ],
+  },
+  {
+    filename: 'intellectual-property-assignment.pdf',
+    title: 'INTELLECTUAL PROPERTY ASSIGNMENT AGREEMENT',
+    parties: ['Solara Labs Ltd', 'Pemberton Industries PLC'],
+    clauses: [
+      {
+        heading: '1. Assignment of IP Rights',
+        body: 'In consideration of the payment set out in Clause 2, the Assignor hereby assigns to the Assignee absolutely, with full title guarantee, all intellectual property rights (including patents, trade marks, copyright, design rights, database rights, and all applications therefor) in and relating to the proprietary machine learning framework known as "NeuralCore v3" and all associated documentation, source code, and training datasets ("the IP").',
+      },
+      {
+        heading: '2. Consideration',
+        body: 'In consideration of the assignment of the IP Rights, the Assignee shall pay to the Assignor the sum of £2,750,000, payable as follows: £1,500,000 on execution of this Agreement, and £1,250,000 on successful registration of the principal patent (GB2504123.7) in the name of the Assignee. All payments are inclusive of VAT at the applicable rate.',
+      },
+      {
+        heading: '3. Warranties',
+        body: 'The Assignor warrants that it is the sole legal and beneficial owner of the IP Rights; the IP does not infringe the intellectual property rights of any third party; there are no pending claims, disputes, or litigation concerning the IP; and the Assignor has not granted any licence or other right in respect of the IP to any third party.',
+      },
+      {
+        heading: '4. Further Assurance',
+        body: 'The Assignor shall, at the Assignee\'s reasonable cost and expense, execute all documents and do all such things as the Assignee may reasonably require to vest the IP Rights in the Assignee and to register the Assignee as proprietor of any registered IP Rights included in the assignment.',
+      },
+    ],
+  },
+  {
+    filename: 'service-level-agreement.pdf',
+    title: 'SERVICE LEVEL AGREEMENT',
+    parties: ['Nexgen Infrastructure Ltd', 'Broadstone Financial Services Ltd'],
+    clauses: [
+      {
+        heading: '1. Service Availability',
+        body: 'Nexgen Infrastructure Ltd ("Provider") shall make the managed cloud platform ("Service") available to Broadstone Financial Services Ltd ("Customer") with a minimum monthly uptime of 99.95% measured on a rolling 30-day basis, excluding Scheduled Maintenance Windows communicated at least 72 hours in advance. Uptime is defined as the percentage of time the Service is accessible and operational during normal operating conditions.',
+      },
+      {
+        heading: '2. Performance Standards',
+        body: 'The Provider shall ensure that: (a) API response time for standard requests shall not exceed 200ms at the 95th percentile; (b) data ingestion pipelines shall process batches within 4 hours of receipt under normal load; (c) recovery time objective (RTO) for Tier 1 services shall not exceed 1 hour; and (d) recovery point objective (RPO) shall not exceed 15 minutes for all production databases.',
+      },
+      {
+        heading: '3. Service Credits',
+        body: 'In the event of a breach of the availability commitment, the Customer shall be entitled to a service credit as follows: below 99.95% but above 99.0% — 10% of the Monthly Service Fee; below 99.0% but above 95.0% — 25%; below 95.0% — 50%. Service credits shall be applied against the following month\'s invoice and shall constitute the Customer\'s sole and exclusive remedy for availability failures.',
+      },
+      {
+        heading: '4. Support and Incident Response',
+        body: 'The Provider shall maintain a 24/7 technical support function. Critical incidents (P1) affecting core payment processing shall receive an initial response within 15 minutes and a resolution target of 4 hours. High-priority incidents (P2) shall receive response within 1 hour and resolution target of 8 hours. All incidents shall be tracked and reported in monthly service review meetings.',
+      },
+    ],
+  },
 ];
 
 function generatePdf(spec: DocSpec, outputPath: string): Promise<void> {
@@ -212,7 +327,7 @@ async function main() {
     await generatePdf(spec, path);
     console.log(`Generated: ${path}`);
   }
-  console.log('Done — 5 demo PDFs written to assets/demo-contracts/');
+  console.log(`Done — ${docs.length} demo PDFs written to assets/demo-contracts/`);
 }
 
 main().catch(e => { console.error(e); process.exit(1); });
