@@ -263,18 +263,17 @@ app.post('/api/documents/:id/verify', upload.single('pdf'), async (req, res) => 
   }
 });
 
-// x402 payment gate — only active when X402_TREASURY_ADDRESS is set.
-// Without it, /api/anchor is open (useful for self-hosters and local dev).
+// POST /api/anchor — agent-friendly JSON endpoint for hash anchoring.
+// Accepts { hash, envelope_id?, signers? }, returns a proof bundle.
+// Protected by x402 paywall when X402_TREASURY_ADDRESS is configured.
+const anchorMiddleware: express.RequestHandler[] = [express.json({ limit: '64kb' })];
 if (process.env.X402_TREASURY_ADDRESS) {
-  app.use(requireAnchorPayment());
+  anchorMiddleware.push(requireAnchorPayment());
 } else {
   process.stderr.write('warn: X402_TREASURY_ADDRESS not set — /api/anchor payment gate disabled\n');
 }
 
-// POST /api/anchor — agent-friendly JSON endpoint for hash anchoring.
-// Accepts { hash, envelope_id?, signers? }, returns a proof bundle.
-// Protected by x402 paywall when X402_TREASURY_ADDRESS is configured.
-app.post('/api/anchor', express.json({ limit: '64kb' }), async (req, res) => {
+app.post('/api/anchor', ...anchorMiddleware, async (req, res) => {
   const body = req.body as {
     hash?: unknown;
     envelope_id?: unknown;
