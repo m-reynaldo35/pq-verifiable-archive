@@ -1,4 +1,8 @@
 import 'dotenv/config';
+// Polyfill globalThis.crypto for Node.js environments where it isn't auto-set.
+// Required by @noble/hashes (used by @noble/post-quantum for ML-DSA signing).
+import { webcrypto } from 'node:crypto';
+if (!globalThis.crypto) (globalThis as unknown as { crypto: unknown }).crypto = webcrypto;
 import express from 'express';
 import multer from 'multer';
 import path from 'node:path';
