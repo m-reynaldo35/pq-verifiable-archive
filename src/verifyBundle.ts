@@ -12,6 +12,12 @@ import { getStateProofForRound } from './stateProofCollector.js';
 
 const DEFAULT_INDEXER_URL = 'https://mainnet-idx.algonode.cloud';
 
+// Pinned out-of-band: the DocuSign ML-DSA-65 key registration txn.
+// Using a pinned value prevents a forger from substituting their own registered key.
+// Override via DOCUSIGN_KEY_REG_TXN_ID env var if the key is rotated.
+const PINNED_KEY_REG_TXN_ID =
+  process.env.DOCUSIGN_KEY_REG_TXN_ID ?? 'BUVBKZAYLHFLAX4WLD7KA7OQZAE4QYHGY3SHY3TVKVJFGQXP3IJA';
+
 export interface VerifyStep {
   name: string;
   passed: boolean;
@@ -79,8 +85,8 @@ function sha256hex(data: Uint8Array): string {
 // where this would be enforced.
 async function checkKeyRegistration(
   bundle: ProofBundle,
-  // In production, pass a pinned txn ID here instead of reading from the bundle.
-  registrationTxnId: string = bundle.docusignKeyRegistrationTxnId,
+  // Uses pinned txn ID by default — forgers cannot substitute their own registered key.
+  registrationTxnId: string = PINNED_KEY_REG_TXN_ID ?? bundle.docusignKeyRegistrationTxnId,
 ): Promise<'matched' | 'mismatched' | 'unavailable'> {
   if (!registrationTxnId) return 'unavailable';
   let note: string;
@@ -275,8 +281,8 @@ export async function verifyBundle(
       passed: true,
       informational: true,
       detail: proof
-        ? `confirmed — Falcon-512 state proof covers batch up to round ${proof.stateProofRound} (PQ-safe finality)`
-        : 'pending — not yet generated (check back in ~1 hour)',
+        ? `state proof transaction found — covers interval up to round ${proof.stateProofRound} (existence confirmed; cryptographic validation requires an Algorand node)`
+        : 'pending — not yet generated (check back in ~20 min)',
     });
   } catch {
     steps.push({

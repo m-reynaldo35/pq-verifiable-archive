@@ -77,7 +77,11 @@ async function main() {
     process.exit(EXIT_VALID);
   }
 
-  if (result.operationalError) {
+  // Only show COULD NOT VERIFY if every failing step is an operational/network error.
+  // If any real check failed (signature mismatch, hash mismatch) → INVALID.
+  const failingSteps = result.steps.filter(s => !s.informational && !s.passed);
+  const allOperational = failingSteps.length > 0 && failingSteps.every(s => s.error);
+  if (allOperational) {
     console.error('\nCOULD NOT VERIFY — network or configuration error');
     process.exit(EXIT_ERROR);
   }

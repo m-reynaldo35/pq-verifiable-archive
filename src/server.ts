@@ -192,7 +192,7 @@ app.post('/api/archive', upload.single('pdf'), async (req, res) => {
     write({
       step: 'stateproof',
       status: 'info',
-      detail: 'pending — Falcon coverage in ~17 min (informational)',
+      detail: 'pending — Falcon coverage in ~20 min (informational)',
     });
 
     write({ done: true, record });

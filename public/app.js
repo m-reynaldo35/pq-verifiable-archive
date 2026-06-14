@@ -7,7 +7,7 @@ const STEP_SUBTITLES = {
   'PDF Hash': 'Document fingerprint match',
   'Merkle Inclusion': 'Document is in the sealed batch',
   'Algorand Anchor': 'Public ledger record confirmed',
-  'Falcon-512 State Proof': 'Quantum-safe network attestation (~1 hour after anchoring)',
+  'Falcon-512 State Proof': 'Quantum-safe network attestation (~20 min after anchoring)',
 };
 
 function esc(s) {
