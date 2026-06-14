@@ -33,5 +33,8 @@ export function requireAnchorPayment() {
       },
     },
     server,
+    undefined,
+    undefined,
+    false, // don't sync facilitator at startup — contact lazily on first payment
   );
 }
