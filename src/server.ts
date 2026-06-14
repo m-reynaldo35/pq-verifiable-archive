@@ -4,13 +4,14 @@ import multer from 'multer';
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { webhookRouter } from './webhookHandler.js';
-import { ProofBundle, DocuSignSigner } from './bundleSigner.js';
+import { ProofBundle, DocuSignSigner, signBundle } from './bundleSigner.js';
 import { verifyBundle } from './verifyBundle.js';
 import { anchorToAlgorand } from './algorandAnchor.js';
-import { buildMerkleTree, getMerkleRoot } from './merkleBatcher.js';
+import { buildMerkleTree, getMerkleRoot, getMerkleProof } from './merkleBatcher.js';
 import { hashDocument } from './documentHasher.js';
 import { assembleBundle } from './proofBundleAssembler.js';
-import { StateProofData } from './stateProofCollector.js';
+import { StateProofData, coveringRound } from './stateProofCollector.js';
+import { requireAnchorPayment } from './anchorPaywall.js';
 import {
   initArchive,
   listRecords,
@@ -259,6 +260,75 @@ app.post('/api/documents/:id/verify', upload.single('pdf'), async (req, res) => 
   } catch (e) {
     console.error(`verify failed: ${(e as Error).message}`);
     res.status(500).json({ valid: false, steps: [], signers: [], error: (e as Error).message });
+  }
+});
+
+// x402 payment gate — only active when X402_TREASURY_ADDRESS is set.
+// Without it, /api/anchor is open (useful for self-hosters and local dev).
+if (process.env.X402_TREASURY_ADDRESS) {
+  app.use(requireAnchorPayment());
+} else {
+  process.stderr.write('warn: X402_TREASURY_ADDRESS not set — /api/anchor payment gate disabled\n');
+}
+
+// POST /api/anchor — agent-friendly JSON endpoint for hash anchoring.
+// Accepts { hash, envelope_id?, signers? }, returns a proof bundle.
+// Protected by x402 paywall when X402_TREASURY_ADDRESS is configured.
+app.post('/api/anchor', express.json({ limit: '64kb' }), async (req, res) => {
+  const body = req.body as {
+    hash?: unknown;
+    envelope_id?: unknown;
+    signers?: unknown;
+  };
+
+  const hash = body.hash;
+  if (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash)) {
+    res.status(400).json({ error: 'hash must be a 64-character lowercase hex SHA-256 string' });
+    return;
+  }
+
+  const envelopeId =
+    typeof body.envelope_id === 'string' ? body.envelope_id : `doc-${Date.now()}`;
+
+  let docusignSigners: DocuSignSigner[] = [];
+  if (Array.isArray(body.signers)) {
+    const signerError = validateSigners(body.signers as DocuSignSigner[]);
+    if (signerError) {
+      res.status(400).json({ error: signerError });
+      return;
+    }
+    docusignSigners = body.signers as DocuSignSigner[];
+  }
+
+  try {
+    const tree = buildMerkleTree([hash]);
+    const merkleRoot = getMerkleRoot(tree);
+
+    const { txId, confirmedRound, blockTime } = await anchorToAlgorand(merkleRoot, [envelopeId]);
+
+    const merkleProof = getMerkleProof(tree, hash);
+    const unsigned: Omit<ProofBundle, 'signature'> = {
+      protocol: 'pqva/1',
+      envelopeId,
+      documentHash: hash,
+      batchId: txId,
+      merkleRoot,
+      merkleProof,
+      algorandTxnId: txId,
+      algorandRound: confirmedRound,
+      ...(blockTime ? { blockTimestamp: blockTime } : {}),
+      stateProofRound: coveringRound(confirmedRound),
+      signingMetadata: { signers: [] },
+      docusignSigners,
+      docusignKeyRegistrationTxnId: process.env.DOCUSIGN_KEY_REGISTRATION_TXN_ID ?? '',
+      algorithm: 'ml-dsa-65',
+    };
+
+    const bundle = signBundle(unsigned);
+    res.json({ success: true, algorandTxnId: txId, algorandRound: confirmedRound, bundle });
+  } catch (e) {
+    console.error(`anchor failed: ${(e as Error).message}`);
+    res.status(500).json({ error: (e as Error).message });
   }
 });
 

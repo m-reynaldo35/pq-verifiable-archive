@@ -242,6 +242,119 @@ Single-page app: upload PDF + bundle → verify client-side → step-by-step res
 
 ---
 
+## Phase 7 — MCP Server (AI Agent Interface)
+**Goal:** Expose anchor and verify as MCP tools so any Claude agent (or MCP-compatible model) can call them directly, with x402 micropayment handled automatically.
+
+**Why:** AI agents that draft, route, or process signed documents need a simple primitive — "anchor this hash, give me a proof bundle." MCP is the standard interface. This is the product for the agent economy.
+
+### 7.1 — Install MCP SDK
+- [x] `npm install @modelcontextprotocol/sdk`
+- [x] Add `"mcp": "tsx src/mcp-server.ts"` to `package.json` scripts
+
+### 7.2 — MCP Server (`src/mcp-server.ts`)
+- [x] Stdio transport (works with Claude Desktop, Claude Code, any MCP host)
+- [x] Tool: `anchor_document`
+  - Input: `hash` (SHA-256 hex string) + optional `metadata` (envelope ID, signers array)
+  - Action: builds single-leaf Merkle tree → anchors to Algorand → assembles and signs bundle
+  - Output: full proof bundle JSON + `algorandTxnId`
+- [x] Tool: `verify_bundle`
+  - Input: `bundle` (proof bundle JSON object) + optional `pdf_base64`
+  - Action: runs all 5 verification checks
+  - Output: `{ valid, steps[], signers[] }`
+- [ ] Tool: `get_bundle` (optional)
+  - Input: `algorandTxnId`
+  - Action: fetches bundle from archive store by txn ID
+  - Output: proof bundle JSON
+
+### 7.3 — README: Claude Desktop / Claude Code install block
+- [x] Add `mcp` config snippet to README so users can add it in 3 lines
+
+**Acceptance:** Claude can call `anchor_document` and receive a valid proof bundle. `verify_bundle` returns correct pass/fail on the sample bundle.
+
+---
+
+## Phase 8 — x402 Payment Gate
+**Goal:** Charge per anchor via x402 micropayment to treasury. Keep gas fees covered by a centralized signer wallet. Make the service self-sustaining at near-zero cost.
+
+**Model:**
+- Price: $0.01 USDC per `anchor_document` call (hosted service)
+- Gas (Algorand txn fee): ~0.001 ALGO (~$0.0002) — covered by signer wallet, offset by the $0.01 charge
+- `verify_bundle` is free (read-only, no on-chain cost)
+- Self-hosted: free — runs against your own Algorand wallet, no payment gate
+
+### 8.1 — x402 Middleware on Anchor Endpoint
+- [x] Add `POST /api/anchor` REST endpoint to `src/server.ts`
+  - Accepts `{ hash, envelope_id?, signers? }` JSON body
+  - Returns proof bundle JSON
+- [x] Add x402 paywall middleware to `/api/anchor` using `@x402-avm/express` + `@x402-avm/avm`
+  - Facilitator: GoPlausible hosted (`X402_FACILITATOR_URL`, self-hostable)
+  - Treasury: `X402_TREASURY_ADDRESS` (Algorand address, receives USDC)
+  - Toll: `X402_TOLL_USD` (default `$0.01`)
+  - Gate disabled gracefully when `X402_TREASURY_ADDRESS` unset (open for self-hosters)
+- [x] Paywall in `src/anchorPaywall.ts` — isolated, easy to swap or remove
+
+### 8.2 — MCP Server routes through REST endpoint
+- [ ] `anchor_document` MCP tool calls `POST /api/anchor` internally (so payment gate applies)
+- [ ] Pass-through: agent's x402 payment header forwarded to the REST call
+
+### 8.3 — Signer wallet top-up monitoring
+- [ ] Document minimum ALGO balance needed in signer wallet (e.g. 1 ALGO covers ~1000 anchors)
+- [ ] Add startup warning if signer wallet balance below threshold
+
+**Acceptance:** Calling `anchor_document` without a valid x402 payment returns 402. With payment, anchor completes and USDC lands in treasury.
+
+---
+
+## Phase 9 — Open Source Cleanup
+**Goal:** Publish a clean, well-documented open source repo that anyone can self-host or integrate against the hosted service.
+
+### 9.1 — License
+- [x] Replace `"license": "ISC"` in `package.json` with `"license": "MIT"`
+- [x] Add `LICENSE` file (MIT, copyright Mark Reynolds 2026)
+
+### 9.2 — Repository hygiene
+- [x] Verify `.gitignore` covers `.env`, `bundles/`, `assets/*.pdf`, `node_modules/`
+- [x] Audit source for hardcoded values — only pinned public txn ID in verifyBundle.ts (intentional)
+- [x] Review `archive/` — demo data only, `.example` email addresses, no real PII
+
+### 9.3 — README update
+- [x] Updated goal: open-source PQ tamper-evidence layer for any signed document
+- [x] MCP quick-start block (Claude Desktop config)
+- [x] x402 pricing section ($0.01/anchor hosted, free to self-host)
+- [x] Self-host instructions
+- [x] "Who uses this" section: HR, legal, healthcare, AI agents
+
+### 9.4 — `.env.example` update
+- [x] Added `X402_TREASURY_ADDRESS`, `X402_TOLL_USD`, `X402_FACILITATOR_URL`
+
+**Acceptance:** A developer with no prior context can clone, fill in `.env`, run `npm start` and `npm run mcp`, and anchor a document in under 10 minutes.
+
+---
+
+## Phase 10 — Launch
+**Goal:** Get the project in front of the Algorand ecosystem, MCP community, and legal/HR tech buyers.
+
+### 10.1 — Blog post (`docs/blog-post.md`)
+- [ ] Title: "Post-quantum document anchoring for AI agents on Algorand"
+- [ ] ~600 words: the problem (RSA/ECDSA won't survive quantum), the solution (ML-DSA + Algorand Falcon-512), why agents need this (autonomous agreements need tamper-proof receipts), how to add it to Claude in 3 lines, pricing
+- [ ] Publish on Mirror, dev.to, or personal site
+
+### 10.2 — MCP registry submission
+- [ ] Submit to MCP server directory / awesome-mcp list
+- [ ] Package as standalone npm publish: `pqva-mcp` (or scoped under existing org)
+
+### 10.3 — Algorand ecosystem
+- [ ] Post in Algorand Discord (#builders channel)
+- [ ] Submit to Algorand Foundation showcase / developer grants page
+- [ ] Reference LabTrace as prior art, differentiate: documents vs. lab data, PQ-first
+
+### 10.4 — Community
+- [ ] Product Hunt launch (hook: "Post-quantum DocuSign alternative for AI agents")
+- [ ] Post in r/algorand, r/MachineLearning (AI agent angle)
+- [ ] Reach out to HR/legal tech newsletters: Legaltech News, HR Brew
+
+---
+
 ## Key Reference
 
 | Item | Value |

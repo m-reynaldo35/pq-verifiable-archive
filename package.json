@@ -14,24 +14,29 @@
     "generate-tampered-pdf": "tsx scripts/generate-tampered-pdf.ts",
     "verify": "tsx verifier/verify.ts",
     "start": "npx tsx src/server.ts",
+    "mcp": "tsx src/mcp-server.ts",
     "e2e": "npx tsx scripts/e2e-test.ts"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/m-reynaldo35/docutestproject.git"
+    "url": "git+https://github.com/m-reynaldo35/pq-verifiable-archive.git"
   },
   "keywords": [],
   "author": "Mark Reynolds",
-  "license": "ISC",
+  "license": "MIT",
   "type": "commonjs",
   "bugs": {
-    "url": "https://github.com/m-reynaldo35/docutestproject/issues"
+    "url": "https://github.com/m-reynaldo35/pq-verifiable-archive/issues"
   },
-  "homepage": "https://github.com/m-reynaldo35/docutestproject#readme",
+  "homepage": "https://github.com/m-reynaldo35/pq-verifiable-archive#readme",
   "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@noble/post-quantum": "^0.6.1",
     "@types/multer": "^2.1.0",
     "@types/pdfkit": "^0.17.6",
+    "@x402-avm/avm": "^2.6.1",
+    "@x402-avm/core": "^2.6.1",
+    "@x402-avm/express": "^2.6.1",
     "algosdk": "^3.6.0",
     "canonicalize": "^2.1.0",
     "commander": "^15.0.0",
@@ -42,7 +47,8 @@
     "pdfkit": "^0.19.1",
     "qrcode": "^1.5.4",
     "tsx": "^4.22.4",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "zod": "^3.23.8"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
