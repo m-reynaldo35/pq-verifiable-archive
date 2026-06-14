@@ -65,7 +65,13 @@ app.use('/webhook', webhookRouter);
 app.use(express.static(path.join(process.cwd(), 'public')));
 
 app.get('/health', (_req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.json({
+    status: 'ok',
+    timestamp: new Date().toISOString(),
+    nodeVersion: process.version,
+    hasCrypto: typeof globalThis.crypto !== 'undefined',
+    hasGetRandomValues: typeof (globalThis as unknown as { crypto?: { getRandomValues?: unknown } }).crypto?.getRandomValues === 'function',
+  });
 });
 
 app.get('/demo/bundle', (_req, res) => res.sendFile(path.resolve('bundles/sample-contract-bundle.json')));
