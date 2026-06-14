@@ -2,9 +2,18 @@
   "name": "pq-verifiable-archive",
   "version": "1.0.0",
   "description": "Post-quantum document anchoring to Algorand mainnet with ML-DSA-65 (NIST FIPS-204) signatures. MCP server for AI agents. Pay-per-anchor REST API via x402.",
-  "main": "dist/server.js",
-  "directories": {
-    "doc": "docs"
+  "files": [
+    "src/",
+    "verifier/",
+    "bin/",
+    "mcp.json",
+    "public/",
+    "README.md",
+    "LICENSE",
+    "tsconfig.json"
+  ],
+  "bin": {
+    "pq-verifiable-archive": "bin/pq-verifiable-archive.js"
   },
   "scripts": {
     "generate-wallet": "tsx scripts/generate-wallet.ts",
