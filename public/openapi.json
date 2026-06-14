@@ -1,0 +1,215 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "PQ Verifiable Archive",
+    "version": "1.0.0",
+    "description": "Post-quantum document anchoring to Algorand mainnet with ML-DSA-65 (NIST FIPS-204) signatures. Pay $0.01 USDC per anchor via x402. Verify for free.",
+    "license": { "name": "MIT" },
+    "contact": {
+      "url": "https://github.com/m-reynaldo35/pq-verifiable-archive"
+    }
+  },
+  "servers": [
+    {
+      "url": "https://pq-verifiable-archive-production.up.railway.app",
+      "description": "Hosted API (pay-per-anchor)"
+    }
+  ],
+  "paths": {
+    "/health": {
+      "get": {
+        "summary": "Health check",
+        "operationId": "health",
+        "responses": {
+          "200": {
+            "description": "Service is running",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": { "type": "string", "example": "ok" },
+                    "timestamp": { "type": "string", "format": "date-time" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/anchor": {
+      "post": {
+        "summary": "Anchor a document hash to Algorand mainnet",
+        "operationId": "anchorDocument",
+        "description": "Requires an x402 payment of $0.01 USDC on Algorand mainnet. Send the request without a payment header first to receive the 402 payment-required instructions, then resend with the payment-signature header.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["hash"],
+                "properties": {
+                  "hash": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{64}$",
+                    "description": "SHA-256 hash of the document (64-char lowercase hex)",
+                    "example": "d88c1a367ad6e6bc6c62909b557418a92f2b8c2e1e41e6f390756f4d973094cc"
+                  },
+                  "envelope_id": {
+                    "type": "string",
+                    "description": "Optional identifier for the document or signing envelope"
+                  },
+                  "signers": {
+                    "type": "array",
+                    "description": "Optional list of signers to embed in the proof bundle",
+                    "items": {
+                      "type": "object",
+                      "required": ["name", "email", "signedAt"],
+                      "properties": {
+                        "name": { "type": "string" },
+                        "email": { "type": "string", "format": "email" },
+                        "signedAt": { "type": "string", "format": "date-time" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Document anchored successfully",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": { "type": "boolean" },
+                    "algorandTxnId": { "type": "string", "description": "Algorand mainnet transaction ID" },
+                    "algorandRound": { "type": "integer", "description": "Confirmed block round" },
+                    "bundle": {
+                      "type": "object",
+                      "description": "Self-contained proof bundle signed with ML-DSA-65",
+                      "properties": {
+                        "protocol": { "type": "string", "example": "pqva/1" },
+                        "envelopeId": { "type": "string" },
+                        "documentHash": { "type": "string" },
+                        "merkleRoot": { "type": "string" },
+                        "merkleProof": { "type": "array", "items": { "type": "string" } },
+                        "algorandTxnId": { "type": "string" },
+                        "algorandRound": { "type": "integer" },
+                        "blockTimestamp": { "type": "string", "format": "date-time" },
+                        "stateProofRound": { "type": "integer" },
+                        "algorithm": { "type": "string", "example": "ml-dsa-65" },
+                        "mldsaPublicKey": { "type": "string" },
+                        "signature": { "type": "string" }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "402": {
+            "description": "Payment required. Decode the `payment-required` response header (base64 JSON) for x402 payment instructions.",
+            "headers": {
+              "payment-required": {
+                "description": "base64(JSON) x402 payment requirements",
+                "schema": { "type": "string" }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid request (bad hash format or signer fields)"
+          },
+          "500": {
+            "description": "Server error (Algorand anchor or signing failed)"
+          }
+        },
+        "security": [{ "x402": [] }]
+      }
+    },
+    "/api/verify": {
+      "post": {
+        "summary": "Verify a proof bundle (always free)",
+        "operationId": "verifyBundle",
+        "description": "Runs 5 verification checks: ML-DSA-65 signature, PDF hash match, Merkle inclusion, Algorand anchor, Falcon-512 state proof. No payment required.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "required": ["bundle"],
+                "properties": {
+                  "bundle": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "Proof bundle JSON file"
+                  },
+                  "pdf": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "Optional original PDF to verify document hash"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Verification result",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "valid": { "type": "boolean" },
+                    "steps": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": { "type": "string" },
+                          "passed": { "type": "boolean" },
+                          "skipped": { "type": "boolean" },
+                          "informational": { "type": "boolean" },
+                          "detail": { "type": "string" }
+                        }
+                      }
+                    },
+                    "signers": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": { "type": "string" },
+                          "email": { "type": "string" },
+                          "signedAt": { "type": "string" }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "x402": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "payment-signature",
+        "description": "x402 micropayment on Algorand. $0.01 USDC per anchor. Send without header first to receive 402 with payment instructions."
+      }
+    }
+  }
+}

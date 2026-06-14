@@ -1,0 +1,42 @@
+{
+  "name": "pq-verifiable-archive",
+  "version": "1.0.0",
+  "description": "Post-quantum document anchoring for AI agents. Anchor any SHA-256 hash to Algorand mainnet with ML-DSA-65 (NIST FIPS-204) signatures. Verify offline decades later without trusting any vendor.",
+  "homepage": "https://github.com/m-reynaldo35/pq-verifiable-archive",
+  "license": "MIT",
+  "tools": [
+    {
+      "name": "anchor_document",
+      "description": "Anchor a SHA-256 document hash to Algorand mainnet with post-quantum ML-DSA-65 attestation. Returns a self-contained proof bundle verifiable offline without trusting any vendor.",
+      "parameters": {
+        "hash": "64-character lowercase hex SHA-256 hash of the document",
+        "envelope_id": "(optional) identifier for the document or envelope",
+        "signers": "(optional) array of {name, email, signedAt} signer records"
+      }
+    },
+    {
+      "name": "verify_bundle",
+      "description": "Run all 5 post-quantum verification checks on a proof bundle: ML-DSA-65 signature, PDF hash match, Merkle inclusion, Algorand anchor, and Falcon-512 state proof coverage.",
+      "parameters": {
+        "bundle": "JSON proof bundle returned by anchor_document",
+        "pdf_base64": "(optional) base64-encoded PDF to verify document hash"
+      }
+    }
+  ],
+  "install": {
+    "type": "stdio",
+    "command": "npx",
+    "args": ["tsx", "src/mcp-server.ts"],
+    "env": {
+      "ALGORAND_MNEMONIC": "25-word Algorand mnemonic for the signing wallet",
+      "DOCUSIGN_MLDSA_PUBLIC_KEY": "hex-encoded ML-DSA-65 public key (from npm run register-key)",
+      "DOCUSIGN_MLDSA_PRIVATE_KEY": "hex-encoded ML-DSA-65 private key",
+      "DOCUSIGN_KEY_REGISTRATION_TXN_ID": "Algorand txn ID from npm run register-key"
+    }
+  },
+  "hostedApi": {
+    "url": "https://pq-verifiable-archive-production.up.railway.app",
+    "payment": "x402 — $0.01 USDC per anchor on Algorand mainnet",
+    "verifyEndpoint": "POST /api/verify (always free)"
+  }
+}

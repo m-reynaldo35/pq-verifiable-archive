@@ -1,7 +1,7 @@
 {
   "name": "pq-verifiable-archive",
   "version": "1.0.0",
-  "description": "Post-quantum verifiable archive for DocuSign envelopes",
+  "description": "Post-quantum document anchoring to Algorand mainnet with ML-DSA-65 (NIST FIPS-204) signatures. MCP server for AI agents. Pay-per-anchor REST API via x402.",
   "main": "dist/server.js",
   "directories": {
     "doc": "docs"
@@ -21,7 +21,20 @@
     "type": "git",
     "url": "git+https://github.com/m-reynaldo35/pq-verifiable-archive.git"
   },
-  "keywords": [],
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "algorand",
+    "post-quantum",
+    "ml-dsa",
+    "fips-204",
+    "document-signing",
+    "blockchain",
+    "x402",
+    "tamper-evident",
+    "verifiable",
+    "ai-agents"
+  ],
   "author": "Mark Reynolds",
   "license": "MIT",
   "type": "commonjs",

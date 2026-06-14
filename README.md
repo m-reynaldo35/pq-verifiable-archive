@@ -54,18 +54,20 @@ If you don't want to run your own node, call the hosted REST endpoint:
 
 ```bash
 # Without payment — returns 402 with payment instructions
-curl -X POST https://your-host/api/anchor \
+curl -X POST https://pq-verifiable-archive-production.up.railway.app/api/anchor \
   -H "Content-Type: application/json" \
   -d '{"hash":"<sha256 hex>","envelope_id":"contract-001"}'
 
 # With x402 payment ($0.01 USDC on Algorand)
-curl -X POST https://your-host/api/anchor \
+curl -X POST https://pq-verifiable-archive-production.up.railway.app/api/anchor \
   -H "Content-Type: application/json" \
   -H "payment-signature: <x402 payment header>" \
   -d '{"hash":"<sha256 hex>","envelope_id":"contract-001"}'
 ```
 
 Price: **$0.01 per anchor.** Verification is always free.
+
+**OpenAPI spec:** [`/openapi.json`](https://pq-verifiable-archive-production.up.railway.app/openapi.json) — machine-readable for LLMs, tools, and code generators.
 
 ## Self-hosted quick start
 
