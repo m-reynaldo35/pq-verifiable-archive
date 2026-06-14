@@ -5,6 +5,7 @@ import { webcrypto } from 'node:crypto';
 if (!globalThis.crypto) (globalThis as unknown as { crypto: unknown }).crypto = webcrypto;
 import express from 'express';
 import multer from 'multer';
+import { rateLimit } from 'express-rate-limit';
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { webhookRouter } from './webhookHandler.js';
@@ -57,6 +58,42 @@ const PORT = Number(process.env.PORT ?? 3000);
 
 const app = express();
 
+// Fix 2: API key auth for archive/document endpoints.
+// Set PORTAL_API_KEY env var to enable; omit to leave open (dev/self-hosted).
+function requireApiKey(
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+): void {
+  const key = process.env.PORTAL_API_KEY;
+  if (!key) { next(); return; }
+  const provided =
+    (req.headers['x-api-key'] as string | undefined) ??
+    req.headers['authorization']?.replace(/^Bearer /, '');
+  if (!provided || provided !== key) {
+    res.status(401).json({ error: 'unauthorized' });
+    return;
+  }
+  next();
+}
+
+// Fix 1: Rate limiters for CPU/disk-intensive endpoints.
+const verifyLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 20,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'too many verify requests — try again in a minute' },
+});
+
+const archiveLimiter = rateLimit({
+  windowMs: 60_000,
+  max: 10,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'too many archive requests — try again in a minute' },
+});
+
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 
 app.use('/webhook/docusign', express.raw({ type: 'application/json' }));
@@ -73,6 +110,7 @@ app.get('/demo/pdf', (_req, res) => res.sendFile(path.resolve('assets/sample-con
 
 app.post(
   '/api/verify',
+  verifyLimiter,
   upload.fields([
     { name: 'bundle', maxCount: 1 },
     { name: 'pdf', maxCount: 1 },
@@ -106,7 +144,7 @@ app.post(
   },
 );
 
-app.post('/api/archive', upload.single('pdf'), async (req, res) => {
+app.post('/api/archive', requireApiKey, archiveLimiter, upload.single('pdf'), async (req, res) => {
   const file = req.file;
   if (!file) {
     res.status(400).json({ error: 'pdf file is required' });
@@ -210,12 +248,12 @@ app.post('/api/archive', upload.single('pdf'), async (req, res) => {
   }
 });
 
-app.get('/api/documents', (_req, res) => {
+app.get('/api/documents', requireApiKey, (_req, res) => {
   res.json(listRecords());
 });
 
-app.get('/api/documents/:id/bundle', (req, res) => {
-  const record = getRecord(req.params.id);
+app.get('/api/documents/:id/bundle', requireApiKey, (req, res) => {
+  const record = getRecord(String(req.params.id));
   if (!record) {
     res.status(404).json({ error: 'document not found' });
     return;
@@ -223,8 +261,8 @@ app.get('/api/documents/:id/bundle', (req, res) => {
   res.download(getBundlePath(record.id), `${record.title}-bundle.json`);
 });
 
-app.get('/api/documents/:id/pdf', (req, res) => {
-  const record = getRecord(req.params.id);
+app.get('/api/documents/:id/pdf', requireApiKey, (req, res) => {
+  const record = getRecord(String(req.params.id));
   if (!record) {
     res.status(404).json({ error: 'document not found' });
     return;
@@ -232,7 +270,7 @@ app.get('/api/documents/:id/pdf', (req, res) => {
   res.download(getPdfPath(record.id), record.filename);
 });
 
-app.post('/api/documents/:id/verify', upload.single('pdf'), async (req, res) => {
+app.post('/api/documents/:id/verify', requireApiKey, upload.single('pdf'), async (req, res) => {
   const record = getRecord(String(req.params.id));
   if (!record) {
     res.status(404).json({ valid: false, steps: [], signers: [], error: 'document not found' });
@@ -294,6 +332,11 @@ app.post('/api/anchor', express.json({ limit: '64kb' }), async (req, res) => {
 
   let docusignSigners: DocuSignSigner[] = [];
   if (Array.isArray(body.signers)) {
+    // Fix 4: cap signers array to prevent abuse.
+    if (body.signers.length > 50) {
+      res.status(400).json({ error: 'signers array must not exceed 50 entries' });
+      return;
+    }
     const signerError = validateSigners(body.signers as DocuSignSigner[]);
     if (signerError) {
       res.status(400).json({ error: signerError });
@@ -307,6 +350,17 @@ app.post('/api/anchor', express.json({ limit: '64kb' }), async (req, res) => {
     const merkleRoot = getMerkleRoot(tree);
 
     const { txId, confirmedRound, blockTime } = await anchorToAlgorand(merkleRoot, [envelopeId]);
+
+    // Fix 5: structured audit log for every successful anchor.
+    console.log(JSON.stringify({
+      event: 'anchor',
+      hash,
+      envelopeId,
+      algorandTxnId: txId,
+      round: confirmedRound,
+      timestamp: new Date().toISOString(),
+      ip: req.ip,
+    }));
 
     const merkleProof = getMerkleProof(tree, hash);
     const unsigned: Omit<ProofBundle, 'signature'> = {

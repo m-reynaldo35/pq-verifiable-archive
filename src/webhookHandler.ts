@@ -34,7 +34,11 @@ function validateSignature(rawBody: Buffer, headerValue: string | undefined): bo
 }
 
 function extractEnvelopeId(body: DocuSignWebhookBody): string | undefined {
-  return body.envelopeId ?? body.data?.envelopeId;
+  const raw = body.envelopeId ?? body.data?.envelopeId;
+  if (!raw) return undefined;
+  // Fix 6: strip path-traversal characters before using in filesystem paths.
+  const sanitized = raw.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 100);
+  return sanitized || undefined;
 }
 
 // Fire-and-forget: the webhook responds 200 before this completes so DocuSign
