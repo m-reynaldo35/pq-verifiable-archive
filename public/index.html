@@ -1106,11 +1106,14 @@
       issuerAddress: 'XCJOXAMHVPXGFJHHKF3CUSVD7CD44Z4FB3BFXZYH46HYX6NUQ7TANSWAMM',
       keyRegistrationTxnId: 'S7NGS2LDQXB73R4XSSOS6VRCS66ZL3I5S7FQWXHB4YIXLDISLZ7Q',
       pkSha256: 'ede1e72e87efbd21582419e93b290d4dbeae26fe9614e4985f9bd39c4c1886ef',
+      protocols: ['pqva/2'],
     },
-    { // original issuer: key registration txn BUVB… sent by JJNDY3…
+    { // original issuer, RETIRED: pqva/1 anchors up to its last anchor round only
       issuerAddress: 'JJNDY3TLLBDD5RUSKIYQXCPVD3YRVQ3M6K4TRVJD2TDM4SO3VMRC7U2YYM',
       keyRegistrationTxnId: 'BUVBKZAYLHFLAX4WLD7KA7OQZAE4QYHGY3SHY3TVKVJFGQXP3IJA',
       pkSha256: '10dcea3c1e5120f25984b0bc357d6b0c25abd7f9adcea3125321320bcba07883',
+      protocols: ['pqva/1'],
+      maxRound: 62159611,
     },
   ];
   function selectTrust(bundle) {
@@ -1230,6 +1233,7 @@
     if (typeof b.envelopeId !== 'string') p.push('envelopeId');
     if (!Array.isArray(b.merkleProof)) p.push('merkleProof');
     if (b.blockTimestamp !== undefined && (typeof b.blockTimestamp !== 'string' || isNaN(Date.parse(b.blockTimestamp)))) p.push('blockTimestamp');
+    if (Object.keys(b).includes('__proto__')) p.push('__proto__ key not allowed');
     if (b.protocol === 'pqva/2') {
       if (typeof b.mldsaPublicKey !== 'string') p.push('mldsaPublicKey');
       if (typeof b.issuerAddress !== 'string') p.push('issuerAddress');
@@ -1243,7 +1247,12 @@
   // Confirm the key belongs to the trusted issuer. Fails closed.
   async function checkKeyClient(pubBytes, bundle, TRUST) {
     const fp = bytesToHex(await sha256Bytes(pubBytes));
-    if (fp === TRUST.pkSha256) return { status: 'matched', detail: 'key fingerprint matches the pinned issuer key (offline)' };
+    if (TRUST.pkSha256) {
+      // A pinned fingerprint is strict: no on-chain lookup can add other keys.
+      return fp === TRUST.pkSha256
+        ? { status: 'matched', detail: 'key fingerprint matches the pinned issuer key (offline)' }
+        : { status: 'mismatched', detail: 'public key is not the pinned key of this issuer' };
+    }
     const regId = (bundle.protocol === 'pqva/2' ? bundle.keyRegistrationTxnId : bundle.docusignKeyRegistrationTxnId) || TRUST.keyRegistrationTxnId;
     let txn;
     try { txn = await fetchIndexerTxn(regId); }
@@ -1282,14 +1291,23 @@
     } else {
       try {
         const pubBytes = hexToBytes(bundle.mldsaPublicKey, 'mldsaPublicKey', 1952);
-        if (bundle.protocol === 'pqva/2' && bundle.issuerAddress !== TRUST.issuerAddress) {
-          steps.push({ name: SIG, passed: false, detail: 'bundle issuer ' + bundle.issuerAddress + ' is not a trusted issuer' });
+        const scopeError =
+          bundle.protocol === 'pqva/2' && bundle.issuerAddress !== TRUST.issuerAddress
+            ? 'bundle issuer ' + bundle.issuerAddress + ' is not a trusted issuer'
+            : TRUST.protocols && !TRUST.protocols.includes(bundle.protocol)
+              ? 'issuer ' + TRUST.issuerAddress + ' is only trusted for ' + TRUST.protocols.join(', ') + ' bundles'
+              : TRUST.maxRound !== undefined && bundle.algorandRound > TRUST.maxRound
+                ? 'issuer ' + TRUST.issuerAddress + ' is retired; only anchors up to round ' + TRUST.maxRound + ' are trusted'
+                : null;
+        if (scopeError) {
+          steps.push({ name: SIG, passed: false, detail: scopeError });
         } else {
           let mldsa;
           try { mldsa = await loadMldsa(); }
           catch { throw Object.assign(new Error('ML-DSA library unavailable — check network connection and retry'), { operational: true }); }
-          const unsigned = Object.assign({}, bundle);
-          delete unsigned.signature;
+          // Copy own entries (not Object.assign, which would treat a
+          // "__proto__" key as a prototype change).
+          const unsigned = Object.fromEntries(Object.entries(bundle).filter(([k]) => k !== 'signature'));
           const message = new TextEncoder().encode(jcsStringify(unsigned));
           const sigOk = mldsa.verify(hexToBytes(bundle.signature, 'signature', 3309), message, pubBytes);
           if (!sigOk) {

@@ -14,9 +14,12 @@ export interface Storage {
   put(key: string, body: string | Buffer, contentType: string): Promise<void>;
   get(key: string): Promise<Buffer | null>;
   list(prefix: string, limit?: number): Promise<string[]>;
-  // Atomically create `key` if it does not exist. Returns false if it already
-  // exists. Throws on any other storage error so callers can fail closed.
-  claim(key: string): Promise<boolean>;
+  // Atomically create `key` with `body` if it does not exist. Returns false if
+  // it already exists with different content. Throws on any other storage
+  // error so callers can fail closed. Callers put a unique nonce in `body` so a
+  // client-side retry of a write that actually succeeded is still recognised
+  // as their own claim.
+  claim(key: string, body: string): Promise<boolean>;
   release(key: string): Promise<void>;
 }
 
@@ -59,18 +62,21 @@ class BlobStorage implements Storage {
     return out;
   }
 
-  async claim(key: string): Promise<boolean> {
+  async claim(key: string, body: string): Promise<boolean> {
     try {
-      await put(this.path(key), new Date().toISOString(), {
+      await put(this.path(key), body, {
         access: this.access,
         addRandomSuffix: false,
         allowOverwrite: false,
-        contentType: 'text/plain',
+        contentType: 'application/json',
       });
       return true;
     } catch (e) {
-      if (e instanceof BlobError && /already exists/i.test(e.message)) return false;
-      throw e;
+      if (!(e instanceof BlobError && /already exists/i.test(e.message))) throw e;
+      // The SDK retries failed requests; if an earlier attempt of this very
+      // put succeeded, the stored body is ours.
+      const existing = await this.get(key);
+      return existing !== null && existing.toString('utf8') === body;
     }
   }
 
@@ -112,7 +118,7 @@ class FsStorage implements Storage {
   async list(prefix: string, limit = 1000): Promise<string[]> {
     const dir = this.file(prefix.replace(/\/+$/, '') || '.');
     try {
-      const names = await readdir(dir);
+      const names = (await readdir(dir)).sort();
       return names
         .filter(n => !n.endsWith('.tmp'))
         .slice(0, limit)
@@ -123,12 +129,12 @@ class FsStorage implements Storage {
     }
   }
 
-  async claim(key: string): Promise<boolean> {
+  async claim(key: string, body: string): Promise<boolean> {
     const target = this.file(key);
     await mkdir(path.dirname(target), { recursive: true });
     try {
       const fh = await open(target, 'wx');
-      await fh.writeFile(new Date().toISOString());
+      await fh.writeFile(body);
       await fh.close();
       return true;
     } catch (e) {

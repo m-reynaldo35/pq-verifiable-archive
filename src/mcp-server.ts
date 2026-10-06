@@ -1,4 +1,13 @@
-import 'dotenv/config';
+import dotenv from 'dotenv';
+
+// Load signing config from .env for convenience, but never let a .env file in
+// the working directory decide which issuers verify_bundle trusts: keep only
+// PQVA_TRUSTED_* values that were set explicitly in the process environment.
+const explicitTrust = Object.fromEntries(Object.entries(process.env).filter(([k]) => k.startsWith('PQVA_TRUSTED_')));
+dotenv.config({ quiet: true });
+for (const k of Object.keys(process.env)) {
+  if (k.startsWith('PQVA_TRUSTED_') && !(k in explicitTrust)) delete process.env[k];
+}
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
