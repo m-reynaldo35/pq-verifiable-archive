@@ -41,32 +41,45 @@ export interface TrustAnchor {
   publicKeyHex?: string;
 }
 
-// The issuer behind the hosted service at
-// pq-verifiable-archive.vercel.app. Values were read from
-// Algorand mainnet: txn BUVB… (round 62052238) was sent by JJNDY3… with note
-// {"op":"key-register","pkHash":"sha256:10dcea3c…"}.
-// This is an explicit default for the hosted service only. Self-hosters must
+// Issuers of the hosted service at pq-verifiable-archive.vercel.app, newest
+// first. These are explicit defaults for the hosted service only; self-hosters
 // configure their own issuer (see .env.example / verifier --help).
+//
+// Current issuer, created 2026-10-06 when the hosting moved to Vercel: key
+// registration txn S7NGS2LD… (round 65727349) sent by XCJOXAMH….
 export const HOSTED_ISSUER: TrustAnchor = {
+  issuerAddress: 'XCJOXAMHVPXGFJHHKF3CUSVD7CD44Z4FB3BFXZYH46HYX6NUQ7TANSWAMM',
+  keyRegistrationTxnId: 'S7NGS2LDQXB73R4XSSOS6VRCS66ZL3I5S7FQWXHB4YIXLDISLZ7Q',
+  pkSha256: 'ede1e72e87efbd21582419e93b290d4dbeae26fe9614e4985f9bd39c4c1886ef',
+};
+
+// Original issuer (Railway era). Still trusted so bundles it signed — including
+// the demo sample — keep verifying. Read from mainnet: txn BUVB… (round
+// 62052238) sent by JJNDY3… with pkHash sha256:10dcea3c….
+export const LEGACY_HOSTED_ISSUER: TrustAnchor = {
   issuerAddress: 'JJNDY3TLLBDD5RUSKIYQXCPVD3YRVQ3M6K4TRVJD2TDM4SO3VMRC7U2YYM',
   keyRegistrationTxnId: 'BUVBKZAYLHFLAX4WLD7KA7OQZAE4QYHGY3SHY3TVKVJFGQXP3IJA',
   pkSha256: '10dcea3c1e5120f25984b0bc357d6b0c25abd7f9adcea3125321320bcba07883',
 };
 
+export const HOSTED_ISSUERS: TrustAnchor[] = [HOSTED_ISSUER, LEGACY_HOSTED_ISSUER];
+
 // Trust anchor for in-process verification (HTTP server, MCP server). Uses the
-// PQVA_TRUSTED_* variables when set; otherwise falls back to the hosted issuer.
-export function trustAnchorFromEnv(): TrustAnchor {
+// PQVA_TRUSTED_* variables when set; otherwise falls back to the hosted issuers.
+export function trustAnchorFromEnv(): TrustAnchor[] {
   const issuerAddress = process.env.PQVA_TRUSTED_ISSUER_ADDRESS;
   const keyRegistrationTxnId = process.env.PQVA_TRUSTED_KEY_REG_TXN_ID;
-  if (!issuerAddress && !keyRegistrationTxnId) return HOSTED_ISSUER;
+  if (!issuerAddress && !keyRegistrationTxnId) return HOSTED_ISSUERS;
   if (!issuerAddress || !keyRegistrationTxnId) {
     throw new Error(
       'PQVA_TRUSTED_ISSUER_ADDRESS and PQVA_TRUSTED_KEY_REG_TXN_ID must be set together',
     );
   }
-  return {
-    issuerAddress,
-    keyRegistrationTxnId,
-    pkSha256: process.env.PQVA_TRUSTED_PK_SHA256 || undefined,
-  };
+  return [
+    {
+      issuerAddress,
+      keyRegistrationTxnId,
+      pkSha256: process.env.PQVA_TRUSTED_PK_SHA256 || undefined,
+    },
+  ];
 }

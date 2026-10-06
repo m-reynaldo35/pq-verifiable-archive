@@ -402,6 +402,7 @@ Single-page app: upload PDF + bundle → verify client-side → step-by-step res
 - [x] Moved hosting from Railway to Vercel: single Express function, private Vercel Blob storage, durable replay/webhook claims, `waitUntil` for webhook processing
 - [x] Payment replay guard on `/api/anchor` (durable, cross-instance)
 - [x] Compliance docs corrected to match the implementation
+- [x] New hosted issuer XCJOXAMH… (key registration S7NGS2LD…) and new x402 treasury 6EP3PSKD… created 2026-10-06; verifiers trust both the new issuer and the original JJNDY3TL… issuer
 - [ ] Rotate the leaked payer wallet (`2FBKPEID…`) and purge it from git history
 - [ ] Settle x402 payment before anchoring (library currently settles after the handler)
 - [ ] Verify Falcon-512 state proofs + light-block-header proofs so the indexer need not be trusted

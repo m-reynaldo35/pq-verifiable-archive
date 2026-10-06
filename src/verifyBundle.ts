@@ -19,8 +19,9 @@ import { parseHex, isHex32 } from './hex.js';
 const MAX_TIMESTAMP_DRIFT_SEC = 60;
 
 export interface VerifyOptions {
-  // Who the verifier trusts to issue bundles. Never taken from the bundle.
-  trust: TrustAnchor;
+  // Who the verifier trusts to issue bundles (one or several). Never taken
+  // from the bundle.
+  trust: TrustAnchor | TrustAnchor[];
   indexerUrl?: string;
   fetchImpl?: typeof fetch;
 }
@@ -105,6 +106,17 @@ function bundleSigners(b: ProofBundle): { signers: Signer[]; signerSource: Signe
   return { signers: b.docusignSigners ?? [], signerSource: 'requester-asserted' };
 }
 
+// Pick the trust anchor that applies to this bundle. pqva/2 bundles name their
+// issuer; the bundle is still only accepted if that issuer is configured.
+// pqva/1 bundles are matched by their key-registration txn.
+function selectTrustAnchor(bundle: ProofBundle, anchors: TrustAnchor[]): TrustAnchor {
+  const match =
+    bundle.protocol === 'pqva/2'
+      ? anchors.find(a => a.issuerAddress === bundle.issuerAddress)
+      : anchors.find(a => a.keyRegistrationTxnId === bundle.docusignKeyRegistrationTxnId);
+  return match ?? anchors[0];
+}
+
 type KeyCheck =
   | { status: 'matched'; detail: string }
   | { status: 'mismatched'; detail: string }
@@ -181,7 +193,8 @@ export async function verifyBundle(
   pdfBuffer: Buffer | undefined,
   options: VerifyOptions,
 ): Promise<VerifyResult> {
-  const { trust } = options;
+  const anchors = Array.isArray(options.trust) ? options.trust : [options.trust];
+  if (anchors.length === 0) throw new Error('no trusted issuer configured');
   const indexer = new Indexer(options.indexerUrl ?? DEFAULT_INDEXER_URL, options.fetchImpl ?? fetch);
   const steps: VerifyStep[] = [];
 
@@ -198,6 +211,7 @@ export async function verifyBundle(
   }
   const bundle = input as ProofBundle;
   const { signers, signerSource } = bundleSigners(bundle);
+  const trust = selectTrustAnchor(bundle, anchors);
 
   // Step 1 — ML-DSA-65 signature, and the key must belong to the trusted issuer.
   try {
@@ -215,7 +229,7 @@ export async function verifyBundle(
         steps.push({
           name: STEP_SIGNATURE,
           passed: false,
-          detail: `bundle issuer ${bundle.issuerAddress} is not the trusted issuer ${trust.issuerAddress}`,
+          detail: `bundle issuer ${bundle.issuerAddress} is not a trusted issuer`,
         });
       } else if (!verifyBundleSignature(bundle, publicKey)) {
         steps.push({ name: STEP_SIGNATURE, passed: false, detail: 'signature mismatch' });
