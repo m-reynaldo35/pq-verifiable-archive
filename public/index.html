@@ -349,8 +349,8 @@
 <div class="wrap">
   <header>
     <h1>PQ Verifiable Archive</h1>
-    <p class="tagline">Post-quantum tamper evidence for DocuSign envelopes</p>
-    <p class="tagline" style="margin-top:6px; font-size:13px;">Contracts archived today must verify in 2040. RSA and ECDSA receipts won't survive a cryptographically relevant quantum computer — these will.</p>
+    <p class="tagline">Post-quantum tamper evidence for signed documents</p>
+    <p class="tagline" style="margin-top:6px; font-size:13px;">Contracts archived today must verify in 2040. Receipts here are signed with ML-DSA-65 (NIST FIPS-204) instead of RSA or ECDSA.</p>
   </header>
 
   <div class="tabs">
@@ -399,7 +399,7 @@
       </div>
       <div class="stage-body">
         <div class="section-title" style="margin-top:0;">Signing Ceremony</div>
-        <div class="caption" style="margin-top:0; margin-bottom:16px;">Simulated. In production, signer data arrives automatically from DocuSign Connect.</div>
+        <div class="caption" style="margin-top:0; margin-bottom:16px;">Simulated. Signers entered here are recorded as <strong>requester-asserted</strong>: the receipt proves they were claimed, not that these people signed. Only envelopes received via the DocuSign Connect webhook carry DocuSign-reported signers.</div>
         <div class="field-row">
           <input class="txt" id="signerName" type="text" placeholder="Full name" />
           <input class="txt" id="signerEmail" type="email" placeholder="email@example.com" />
@@ -470,7 +470,7 @@
       <div class="section-title">Verification Steps</div>
       <div id="steps"></div>
       <div id="signersWrap" style="display:none">
-        <div class="section-title">Signers</div>
+        <div class="section-title" id="signersTitle">Signers</div>
         <div id="signers"></div>
       </div>
       <div class="banner" id="banner"></div>
@@ -496,6 +496,42 @@
   ['dragover', 'drop'].forEach(ev =>
     document.addEventListener(ev, e => e.preventDefault())
   );
+
+  // -------------------- Operator API key --------------------
+  // Archive and document endpoints require the operator's PORTAL_API_KEY.
+  // It is kept in sessionStorage for this tab only.
+  function getApiKey(forcePrompt) {
+    let key = null;
+    try { key = sessionStorage.getItem('pqvaApiKey'); } catch { /* storage unavailable */ }
+    if (!key || forcePrompt) {
+      key = window.prompt('Operator API key (PORTAL_API_KEY):') || '';
+      try { sessionStorage.setItem('pqvaApiKey', key); } catch { /* storage unavailable */ }
+    }
+    return key;
+  }
+  async function authFetch(url, opts) {
+    const withKey = key => fetch(url, Object.assign({}, opts, {
+      headers: Object.assign({}, (opts && opts.headers) || {}, key ? { 'x-api-key': key } : {}),
+    }));
+    let res = await withKey(getApiKey(false));
+    if (res.status === 401) res = await withKey(getApiKey(true));
+    return res;
+  }
+  async function authDownload(url, filename) {
+    const res = await authFetch(url);
+    if (!res.ok) { alert('Download failed: ' + res.status); return; }
+    const blobUrl = URL.createObjectURL(await res.blob());
+    const a = document.createElement('a');
+    a.href = blobUrl; a.download = filename;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
+  }
+  document.addEventListener('click', e => {
+    const el = e.target.closest('[data-download]');
+    if (!el) return;
+    e.preventDefault();
+    authDownload(el.dataset.download, el.dataset.filename || 'download');
+  });
 
   // -------------------- Tabs --------------------
   const tabs = document.querySelectorAll('.tab');
@@ -746,7 +782,7 @@
     fd.append('signers', JSON.stringify(signers.filter(s => s.signedAt)));
 
     try {
-      const res = await fetch('/api/archive', { method: 'POST', body: fd });
+      const res = await authFetch('/api/archive', { method: 'POST', body: fd });
       // On a non-2xx response the body is a JSON error object, not an NDJSON
       // stream — parse it directly so we never render "undefined" steps.
       if (!res.ok) {
@@ -842,16 +878,11 @@
       '</div>' +
       '<div class="done-util">' +
       '<a href="' + esc(explorer) + '" target="_blank" rel="noopener">View on Algorand explorer ↗</a>' +
-      '<a href="/api/documents/' + esc(record.id) + '/bundle">Download proof bundle</a>' +
+      '<a href="#" data-download="/api/documents/' + esc(encodeURIComponent(record.id)) + '/bundle" data-filename="' + esc(record.title) + '-bundle.json">Download proof bundle</a>' +
       '</div>';
 
     // Auto-trigger download so bundle lands in browser Downloads automatically
-    const a = document.createElement('a');
-    a.href = '/api/documents/' + encodeURIComponent(record.id) + '/bundle';
-    a.download = record.title + '-bundle.json';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    authDownload('/api/documents/' + encodeURIComponent(record.id) + '/bundle', record.title + '-bundle.json');
 
     document.getElementById('archiveAnother').addEventListener('click', resetArchiveWizard);
     document.getElementById('viewInArchive').addEventListener('click', () => {
@@ -868,7 +899,8 @@
     docsContent.innerHTML = '<div class="muted">Loading…</div>';
     let records;
     try {
-      const res = await fetch('/api/documents');
+      const res = await authFetch('/api/documents');
+      if (!res.ok) throw new Error('server returned ' + res.status);
       records = await res.json();
     } catch (err) {
       docsContent.innerHTML = '<div class="net-error" style="display:block">Could not load archive: ' + esc(err.message) + '</div>';
@@ -889,7 +921,8 @@
       '</tr></thead><tbody>';
     for (const r of records) {
       const signerStr = r.signers && r.signers.length
-        ? r.signers.map(s => esc(s.name) + ' (' + fmtDate(s.signedAt) + ')').join(', ')
+        ? r.signers.map(s => esc(s.name) + ' (' + fmtDate(s.signedAt) + ')').join(', ') +
+          (r.signerSource === 'docusign-connect' ? '' : ' <span class="muted">(asserted)</span>')
         : '<span class="muted">—</span>';
       const explorer = 'https://explorer.perawallet.app/tx/' + r.txId;
       html += '<tr class="doc-row" data-id="' + esc(r.id) + '">' +
@@ -899,8 +932,8 @@
         '<td><a href="' + esc(explorer) + '" target="_blank" rel="noopener">' + esc(r.txId.slice(0,12)) + '…</a></td>' +
         '<td><div class="row-actions">' +
           '<button class="sm" data-verify="' + esc(r.id) + '">Verify</button>' +
-          '<a href="/api/documents/' + esc(r.id) + '/bundle">Bundle ↓</a>' +
-          '<a href="/api/documents/' + esc(r.id) + '/pdf">PDF ↓</a>' +
+          '<a href="#" data-download="/api/documents/' + esc(encodeURIComponent(r.id)) + '/bundle" data-filename="' + esc(r.title) + '-bundle.json">Bundle ↓</a>' +
+          '<a href="#" data-download="/api/documents/' + esc(encodeURIComponent(r.id)) + '/pdf" data-filename="' + esc(r.filename) + '">PDF ↓</a>' +
         '</div></td></tr>' +
         '<tr class="drawer-row" data-drawer="' + esc(r.id) + '" style="display:none">' +
           '<td class="drawer-cell" colspan="5"></td></tr>';
@@ -934,7 +967,7 @@
     if (pdfFile) fd.append('pdf', pdfFile);
     let data;
     try {
-      const res = await fetch('/api/documents/' + encodeURIComponent(id) + '/verify', { method: 'POST', body: fd });
+      const res = await authFetch('/api/documents/' + encodeURIComponent(id) + '/verify', { method: 'POST', body: fd });
       data = await res.json();
     } catch (err) {
       cell.innerHTML = '<div class="drawer"><div class="net-error" style="display:block">Verify error: ' + esc(err.message) + '</div></div>';
@@ -959,7 +992,7 @@
         '<div class="restore-wrap" style="display:none; margin-top:10px;">' +
           '<button class="done-ghost restore-btn">↺ Re-verify original</button>' +
         '</div>' +
-        '<div class="drawer-foot">Don\'t trust this server? Download the bundle and PDF and verify with the <a class="link verify-indep">Verify Independently</a> tab — or run the open-source CLI verifier with no browser required.</div>' +
+        '<div class="drawer-foot">Don\'t trust this server? The <a class="link verify-indep">Verify Independently</a> tab checks in your browser against the Algorand indexer, but this page is still served by this server — for full independence run the open-source CLI verifier.</div>' +
       '</div>';
 
     renderSteps(data.steps || [], cell.querySelector('.dsteps'));
@@ -993,8 +1026,8 @@
     netError.style.display = 'none';
     try {
       const [bRes, pRes] = await Promise.all([
-        fetch('/api/documents/' + encodeURIComponent(id) + '/bundle'),
-        fetch('/api/documents/' + encodeURIComponent(id) + '/pdf'),
+        authFetch('/api/documents/' + encodeURIComponent(id) + '/bundle'),
+        authFetch('/api/documents/' + encodeURIComponent(id) + '/pdf'),
       ]);
       if (!bRes.ok || !pRes.ok) throw new Error('documents not found (' + (!bRes.ok ? bRes.status : pRes.status) + ')');
       const [bBlob, pBlob] = await Promise.all([bRes.blob(), pRes.blob()]);
@@ -1058,18 +1091,22 @@
     }
   });
 
-  // ---------- Client-side verification (no server trust) ----------
-  // Public AlgoNode indexer — CORS-enabled, archival.
+  // ---------- Client-side verification ----------
+  // Runs entirely in this browser and contacts only the Algorand indexer below.
+  // The page and /ml-dsa65.js are still served by this server, so for zero
+  // trust in this server use the open-source CLI verifier (verifier/verify.ts).
   const INDEXER_URL = 'https://mainnet-idx.algonode.cloud';
-  const STATE_PROOF_SCAN_WINDOW = 1000;
+  const STATE_PROOF_SCAN_WINDOW = 2048;
+  const MAX_TIMESTAMP_DRIFT_SEC = 60;
 
-  // Pinned out-of-band: the DocuSign ML-DSA-65 key registration txn.
-  // A forger who modifies the bundle cannot substitute their own registered key
-  // because this constant is hardcoded in the verifier, not read from the bundle.
-  const PINNED_KEY_REG_TXN_ID = 'BUVBKZAYLHFLAX4WLD7KA7OQZAE4QYHGY3SHY3TVKVJFGQXP3IJA';
+  // Trusted issuer of the hosted service, pinned here (never read from the
+  // bundle). Read from mainnet: key registration txn BUVB… sent by JJNDY3….
+  const TRUST = {
+    issuerAddress: 'JJNDY3TLLBDD5RUSKIYQXCPVD3YRVQ3M6K4TRVJD2TDM4SO3VMRC7U2YYM',
+    keyRegistrationTxnId: 'BUVBKZAYLHFLAX4WLD7KA7OQZAE4QYHGY3SHY3TVKVJFGQXP3IJA',
+    pkSha256: '10dcea3c1e5120f25984b0bc357d6b0c25abd7f9adcea3125321320bcba07883',
+  };
 
-  // ml_dsa65 is bundled locally at /ml-dsa65.js — no CDN dependency.
-  // The "Verify Independently" claim that only AlgoNode is contacted is true.
   let _mldsaPromise = null;
   function loadMldsa() {
     if (!_mldsaPromise) {
@@ -1080,233 +1117,267 @@
     return _mldsaPromise;
   }
 
-  function hexToBytes(hex) {
-    const clean = hex.startsWith('0x') ? hex.slice(2) : hex;
-    if (clean.length % 2 !== 0) throw new Error('odd-length hex string');
-    const out = new Uint8Array(clean.length / 2);
-    for (let i = 0; i < out.length; i++) out[i] = parseInt(clean.substr(i * 2, 2), 16);
+  // Strict: throws on any non-hex character or wrong length.
+  function hexToBytes(hex, label, expectedBytes) {
+    if (typeof hex !== 'string' || hex.length % 2 !== 0 || !/^[0-9a-fA-F]*$/.test(hex)) {
+      throw new Error((label || 'value') + ' is not a valid hex string');
+    }
+    if (expectedBytes !== undefined && hex.length !== expectedBytes * 2) {
+      throw new Error((label || 'value') + ' must be ' + expectedBytes + ' bytes');
+    }
+    const out = new Uint8Array(hex.length / 2);
+    for (let i = 0; i < out.length; i++) out[i] = parseInt(hex.substr(i * 2, 2), 16);
     return out;
   }
   function bytesToHex(bytes) {
     return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
   }
   async function sha256Bytes(bytes) {
-    const digest = await crypto.subtle.digest('SHA-256', bytes);
-    return new Uint8Array(digest);
+    return new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
   }
-
-  // JCS-style canonicalisation: recursively sort object keys. Matches the
-  // server's `canonicalize` for the JSON value shapes used in bundles.
-  function jcsStringify(value) {
-    if (value === null || typeof value !== 'object') return JSON.stringify(value);
-    if (Array.isArray(value)) return '[' + value.map(jcsStringify).join(',') + ']';
-    const keys = Object.keys(value).sort();
-    return '{' + keys.map(k => JSON.stringify(k) + ':' + jcsStringify(value[k])).join(',') + '}';
-  }
-
-  // Merkle verification replicating src/merkleBatcher.ts: leaves are the raw
-  // 32-byte document-hash bytes, pairs are sorted before a single SHA-256, no
-  // leaf re-hashing.
-  function concatBytes(a, b) {
-    const out = new Uint8Array(a.length + b.length);
-    out.set(a, 0); out.set(b, a.length);
+  function concatBytes(...parts) {
+    const out = new Uint8Array(parts.reduce((n, p) => n + p.length, 0));
+    let o = 0;
+    for (const p of parts) { out.set(p, o); o += p.length; }
     return out;
   }
   function compareBytes(a, b) {
-    const n = Math.min(a.length, b.length);
-    for (let i = 0; i < n; i++) { if (a[i] !== b[i]) return a[i] - b[i]; }
+    for (let i = 0; i < Math.min(a.length, b.length); i++) { if (a[i] !== b[i]) return a[i] - b[i]; }
     return a.length - b.length;
   }
-  async function verifyMerkleProofClient(rootHex, leafHex, proofHex) {
-    let node = hexToBytes(leafHex);
-    for (const sib of proofHex) {
-      const sibling = hexToBytes(sib);
-      const [lo, hi] = compareBytes(node, sibling) <= 0 ? [node, sibling] : [sibling, node];
-      node = await sha256Bytes(concatBytes(lo, hi));
-    }
-    return bytesToHex(node) === (rootHex.startsWith('0x') ? rootHex.slice(2) : rootHex).toLowerCase();
+  const isHex32 = v => typeof v === 'string' && /^[0-9a-f]{64}$/.test(v);
+
+  // RFC 8785 for the value shapes used in bundles (strings, integers, arrays,
+  // objects): keys sorted by UTF-16 code units, JSON.stringify escaping.
+  function jcsStringify(value) {
+    if (value === null || typeof value !== 'object') return JSON.stringify(value);
+    if (Array.isArray(value)) return '[' + value.map(jcsStringify).join(',') + ']';
+    const keys = Object.keys(value).filter(k => value[k] !== undefined).sort();
+    return '{' + keys.map(k => JSON.stringify(k) + ':' + jcsStringify(value[k])).join(',') + '}';
   }
 
+  // pqva/2: leaf = H(0x00||doc), node = H(0x01||L||R), sibling side recorded.
+  async function verifyMerkleV2(rootHex, docHex, proof) {
+    if (!Array.isArray(proof)) throw new Error('merkleProof must be an array');
+    let node = await sha256Bytes(concatBytes(new Uint8Array([0]), hexToBytes(docHex, 'documentHash', 32)));
+    for (const step of proof) {
+      if (!step || (step.side !== 'left' && step.side !== 'right')) throw new Error('merkleProof step has an invalid side');
+      const sib = hexToBytes(step.hash, 'merkleProof hash', 32);
+      node = await sha256Bytes(step.side === 'left'
+        ? concatBytes(new Uint8Array([1]), sib, node)
+        : concatBytes(new Uint8Array([1]), node, sib));
+    }
+    return bytesToHex(node) === rootHex;
+  }
+  // Legacy pqva/1: sorted pairs, no prefixes.
+  async function verifyMerkleV1(rootHex, docHex, proof) {
+    if (!Array.isArray(proof)) throw new Error('merkleProof must be an array');
+    let node = hexToBytes(docHex, 'documentHash', 32);
+    for (const sib of proof) {
+      const s = hexToBytes(String(sib), 'merkleProof hash', 32);
+      node = await sha256Bytes(compareBytes(node, s) <= 0 ? concatBytes(node, s) : concatBytes(s, node));
+    }
+    return bytesToHex(node) === rootHex;
+  }
+
+  class NotFoundError extends Error {}
   async function fetchIndexerTxn(txId) {
     const res = await fetch(INDEXER_URL + '/v2/transactions/' + encodeURIComponent(txId));
+    if (res.status === 404) throw new NotFoundError('transaction ' + txId + ' not found');
     if (!res.ok) throw new Error('indexer ' + res.status + ' ' + res.statusText);
     const body = await res.json();
-    if (!body.transaction) throw new Error('transaction ' + txId + ' not found');
+    if (!body.transaction) throw new NotFoundError('transaction ' + txId + ' not found');
     return body.transaction;
   }
-
-  function b64ToBytes(b64) {
-    const bin = atob(b64);
-    const out = new Uint8Array(bin.length);
-    for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
-    return out;
+  function decodeNote(txn) {
+    if (typeof txn.note !== 'string') return null;
+    try {
+      const bin = atob(txn.note);
+      const bytes = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+      const parsed = JSON.parse(new TextDecoder().decode(bytes));
+      return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+    } catch { return null; }
+  }
+  async function envelopeIdsDigest(ids) {
+    const json = JSON.stringify([...ids].sort());
+    return bytesToHex(await sha256Bytes(new TextEncoder().encode(json)));
   }
 
   function validateBundleSchemaClient(b) {
-    const missing = [];
-    if (!b || typeof b !== 'object') return ['(not a JSON object)'];
-    if (b.protocol !== 'pqva/1') missing.push('protocol (expected "pqva/1")');
-    if (!b.signature) missing.push('signature');
-    if (!b.algorandTxnId) missing.push('algorandTxnId');
-    if (!b.merkleRoot) missing.push('merkleRoot');
-    if (!b.documentHash) missing.push('documentHash');
-    if (b.algorithm !== 'ml-dsa-65') missing.push('algorithm (expected "ml-dsa-65")');
-    return missing;
+    if (!b || typeof b !== 'object' || Array.isArray(b)) return ['bundle is not a JSON object'];
+    const p = [];
+    if (b.protocol !== 'pqva/1' && b.protocol !== 'pqva/2') p.push('protocol (expected "pqva/2" or "pqva/1")');
+    if (b.algorithm !== 'ml-dsa-65') p.push('algorithm');
+    if (typeof b.signature !== 'string' || !b.signature) p.push('signature');
+    if (typeof b.algorandTxnId !== 'string' || !/^[A-Z2-7]{52}$/.test(b.algorandTxnId)) p.push('algorandTxnId');
+    if (!Number.isSafeInteger(b.algorandRound) || b.algorandRound <= 0) p.push('algorandRound');
+    if (!isHex32(b.merkleRoot)) p.push('merkleRoot');
+    if (!isHex32(b.documentHash)) p.push('documentHash');
+    if (typeof b.envelopeId !== 'string') p.push('envelopeId');
+    if (!Array.isArray(b.merkleProof)) p.push('merkleProof');
+    if (b.blockTimestamp !== undefined && (typeof b.blockTimestamp !== 'string' || isNaN(Date.parse(b.blockTimestamp)))) p.push('blockTimestamp');
+    if (b.protocol === 'pqva/2') {
+      if (typeof b.mldsaPublicKey !== 'string') p.push('mldsaPublicKey');
+      if (typeof b.issuerAddress !== 'string') p.push('issuerAddress');
+      if (typeof b.keyRegistrationTxnId !== 'string') p.push('keyRegistrationTxnId');
+      if (!Array.isArray(b.signers)) p.push('signers');
+      if (b.signerSource !== 'docusign-connect' && b.signerSource !== 'requester-asserted') p.push('signerSource');
+    }
+    return p;
   }
 
-  // Run the full verification pipeline in the browser. Returns the same shape
-  // as the server's /api/verify so the shared renderers can be reused.
+  // Confirm the key belongs to the trusted issuer. Fails closed.
+  async function checkKeyClient(pubBytes, bundle) {
+    const fp = bytesToHex(await sha256Bytes(pubBytes));
+    if (fp === TRUST.pkSha256) return { status: 'matched', detail: 'key fingerprint matches the pinned issuer key (offline)' };
+    const regId = (bundle.protocol === 'pqva/2' ? bundle.keyRegistrationTxnId : bundle.docusignKeyRegistrationTxnId) || TRUST.keyRegistrationTxnId;
+    let txn;
+    try { txn = await fetchIndexerTxn(regId); }
+    catch (e) {
+      if (e instanceof NotFoundError) return { status: 'mismatched', detail: 'key registration txn ' + regId + ' does not exist' };
+      return { status: 'unavailable', detail: 'could not look up key registration (' + e.message + ')' };
+    }
+    if (txn.sender !== TRUST.issuerAddress) return { status: 'mismatched', detail: 'key registration was not sent by the trusted issuer' };
+    const note = decodeNote(txn);
+    if (!note || note.op !== 'key-register' || typeof note.pkHash !== 'string') return { status: 'mismatched', detail: 'txn ' + regId + ' is not a pqva key registration' };
+    return note.pkHash === 'sha256:' + fp
+      ? { status: 'matched', detail: 'key registered on-chain by trusted issuer (txn ' + regId + ')' }
+      : { status: 'mismatched', detail: 'public key does not match the on-chain registration' };
+  }
+
+  // Same checks and result shape as src/verifyBundle.ts.
   async function verifyBundleClient(bundle, pdfBytes) {
     const steps = [];
-    let operationalError = false;
-
-    const missing = validateBundleSchemaClient(bundle);
-    if (missing.length) {
+    const problems = validateBundleSchemaClient(bundle);
+    if (problems.length) {
       return {
         valid: false,
-        steps: [{ name: 'Bundle Schema', passed: false,
-          detail: 'Not a valid pqva/1 proof bundle — missing fields: ' + missing.join(', ') }],
-        signers: (bundle && bundle.docusignSigners) || [],
-        operationalError: false,
+        steps: [{ name: 'Bundle Schema', passed: false, detail: 'Not a valid proof bundle — bad or missing: ' + problems.join(', ') }],
+        signers: [], signerSource: 'requester-asserted', documentChecked: false, operationalError: false,
       };
     }
+    const signers = bundle.protocol === 'pqva/2' ? bundle.signers : (bundle.docusignSigners || []);
+    const signerSource = bundle.protocol === 'pqva/2' ? bundle.signerSource : 'requester-asserted';
 
-    // Step 1 — ML-DSA-65 signature over canonical JSON + on-chain key registration.
+    // Step 1 — signature + trusted issuer key.
+    const SIG = 'ML-DSA-65 Signature';
     if (!bundle.mldsaPublicKey) {
-      operationalError = true;
-      steps.push({ name: 'ML-DSA-65 Signature', passed: false, error: true,
-        detail: 'no ML-DSA public key embedded in bundle — cannot verify in-browser' });
+      steps.push({ name: SIG, passed: false, error: true,
+        detail: 'legacy bundle has no embedded public key — verify it with the CLI and --public-key-file' });
     } else {
       try {
-        const mldsa = await loadMldsa();
-        const unsigned = Object.assign({}, bundle);
-        delete unsigned.signature;
-        const message = new TextEncoder().encode(jcsStringify(unsigned));
-        const sigBytes = hexToBytes(bundle.signature);
-        const pubBytes = hexToBytes(bundle.mldsaPublicKey);
-        const sigOk = mldsa.verify(sigBytes, message, pubBytes);
-        if (!sigOk) {
-          steps.push({ name: 'ML-DSA-65 Signature', passed: false, detail: 'signature mismatch' });
+        const pubBytes = hexToBytes(bundle.mldsaPublicKey, 'mldsaPublicKey', 1952);
+        if (bundle.protocol === 'pqva/2' && bundle.issuerAddress !== TRUST.issuerAddress) {
+          steps.push({ name: SIG, passed: false, detail: 'bundle issuer ' + bundle.issuerAddress + ' is not the trusted issuer' });
         } else {
-          // Cross-check embedded key against on-chain pkHash registration.
-          // NOTE (trust model): the registration txn ID is read from the bundle
-          // for this PoC; a hardened verifier would pin it out-of-band.
-          let regDetail = 'key registration not confirmed — network unavailable';
-          let regOk = true;
-          let regConfirmed = false;
-          const regTxnId = PINNED_KEY_REG_TXN_ID || bundle.docusignKeyRegistrationTxnId;
-          if (regTxnId) {
-            try {
-              const regTxn = await fetchIndexerTxn(regTxnId);
-              const noteB64 = regTxn.note;
-              if (noteB64) {
-                const note = new TextDecoder().decode(b64ToBytes(noteB64));
-                const pkHash = JSON.parse(note).pkHash;
-                const expected = 'sha256:' + bytesToHex(await sha256Bytes(pubBytes));
-                if (typeof pkHash === 'string') {
-                  if (pkHash === expected) { regDetail = 'key registration confirmed on-chain'; regConfirmed = true; }
-                  else { regOk = false; }
-                }
-              }
-            } catch { /* leave regDetail as unavailable */ }
+          let mldsa;
+          try { mldsa = await loadMldsa(); }
+          catch { throw Object.assign(new Error('ML-DSA library unavailable — check network connection and retry'), { operational: true }); }
+          const unsigned = Object.assign({}, bundle);
+          delete unsigned.signature;
+          const message = new TextEncoder().encode(jcsStringify(unsigned));
+          const sigOk = mldsa.verify(hexToBytes(bundle.signature, 'signature', 3309), message, pubBytes);
+          if (!sigOk) {
+            steps.push({ name: SIG, passed: false, detail: 'signature mismatch' });
           } else {
-            regDetail = 'key registration txn not available';
-          }
-          if (!regOk) {
-            steps.push({ name: 'ML-DSA-65 Signature', passed: false,
-              detail: 'public key does not match on-chain registration' });
-          } else {
-            steps.push({ name: 'ML-DSA-65 Signature', passed: true,
-              detail: 'NIST FIPS-204 attestation verified offline · ' + regDetail });
+            const key = await checkKeyClient(pubBytes, bundle);
+            steps.push({ name: SIG, passed: key.status === 'matched', error: key.status === 'unavailable' || undefined,
+              detail: key.status === 'matched'
+                ? 'NIST FIPS-204 signature valid · ' + key.detail
+                : 'signature is valid but the key is not confirmed as the trusted issuer\'s: ' + key.detail });
           }
         }
       } catch (e) {
-        const isModuleLoad = e.message && (e.message.includes('import') || e.message.includes('fetch') || e.message.includes('network') || e.message.includes('Failed to fetch'));
-        operationalError = true;
-        steps.push({ name: 'ML-DSA-65 Signature', passed: false, error: true,
-          detail: isModuleLoad
-            ? 'ML-DSA library unavailable — check network connection and retry'
-            : e.message });
+        steps.push({ name: SIG, passed: false, error: e.operational || undefined, detail: e.message });
       }
     }
 
-    // Step 2 — PDF hash match (or informational skip).
+    // Step 2 — document hash.
     if (pdfBytes) {
-      try {
-        const computed = bytesToHex(await sha256Bytes(pdfBytes));
-        const match = computed === bundle.documentHash;
-        steps.push({ name: 'PDF Hash', passed: match,
-          detail: match ? computed
-            : 'This PDF does not match the archived document — it has been modified or is the wrong file (computed '
-              + computed + ' != bundle ' + bundle.documentHash + ')' });
-      } catch (e) {
-        steps.push({ name: 'PDF Hash', passed: false, detail: e.message });
-      }
+      const computed = bytesToHex(await sha256Bytes(pdfBytes));
+      const match = computed === bundle.documentHash;
+      steps.push({ name: 'Document Hash', passed: match,
+        detail: match ? computed
+          : 'This document does not match the anchored one — it was modified or is the wrong file (computed '
+            + computed + ' != bundle ' + bundle.documentHash + ')' });
     } else {
-      steps.push({ name: 'PDF Hash', passed: true, skipped: true,
-        detail: 'Not checked — upload the original PDF to verify document integrity' });
+      steps.push({ name: 'Document Hash', passed: true, skipped: true,
+        detail: 'Not checked — no document supplied, so only the bundle itself was verified' });
     }
 
     // Step 3 — Merkle inclusion.
     try {
-      const ok = await verifyMerkleProofClient(bundle.merkleRoot, bundle.documentHash, bundle.merkleProof || []);
+      const ok = bundle.protocol === 'pqva/2'
+        ? await verifyMerkleV2(bundle.merkleRoot, bundle.documentHash, bundle.merkleProof)
+        : await verifyMerkleV1(bundle.merkleRoot, bundle.documentHash, bundle.merkleProof);
       steps.push({ name: 'Merkle Inclusion', passed: ok,
-        detail: ok ? 'root: ' + bundle.merkleRoot.slice(0, 16) + '...'
-          : 'documentHash is not a leaf under the Merkle root' });
+        detail: ok ? 'root: ' + bundle.merkleRoot.slice(0, 16) + '…' : 'documentHash is not a leaf under the Merkle root' });
     } catch (e) {
       steps.push({ name: 'Merkle Inclusion', passed: false, detail: e.message });
     }
 
-    // Step 4 — Algorand anchor note contains the Merkle root.
+    // Step 4 — anchor txn: trusted sender, claimed round, exact note.
+    let anchoredAt;
     try {
       const txn = await fetchIndexerTxn(bundle.algorandTxnId);
-      if (!txn.note) throw new Error('anchor transaction ' + bundle.algorandTxnId + ' has no note field');
-      const note = new TextDecoder().decode(b64ToBytes(txn.note));
-      const anchored = note.includes(bundle.merkleRoot);
-      const roundTime = typeof txn['round-time'] === 'number' ? txn['round-time'] : undefined;
-      const anchorTime = roundTime ? new Date(roundTime * 1000).toISOString() : undefined;
-      let timeWarning = '';
-      if (anchored && bundle.blockTimestamp && roundTime) {
-        const claimed = Date.parse(bundle.blockTimestamp);
-        if (!isNaN(claimed)) {
-          const drift = Math.abs(claimed - roundTime * 1000) / 1000;
-          if (drift > 60) timeWarning = ' · warning: bundle blockTimestamp differs from on-chain round time by ' + Math.round(drift) + 's';
+      const note = decodeNote(txn);
+      const failures = [];
+      if (txn.sender !== TRUST.issuerAddress) failures.push('sender ' + (txn.sender || '?') + ' is not the trusted issuer');
+      if (txn['confirmed-round'] !== bundle.algorandRound) failures.push('confirmed in round ' + txn['confirmed-round'] + ', bundle claims ' + bundle.algorandRound);
+      if (!note) failures.push('note is missing or not JSON');
+      else {
+        if (note.protocol !== bundle.protocol || note.op !== 'anchor') failures.push('note is not a pqva anchor for this protocol version');
+        if (note.merkleRoot !== bundle.merkleRoot) failures.push('note merkleRoot does not match the bundle');
+        if (note.envelopeCount === 1 && note.envelopeIdsSha256 !== await envelopeIdsDigest([bundle.envelopeId])) {
+          failures.push('note envelope digest does not match the bundle envelopeId');
         }
       }
-      steps.push({ name: 'Algorand Anchor', passed: anchored,
-        detail: anchored
-          ? bundle.algorandTxnId + ' (round ' + bundle.algorandRound + (anchorTime ? ', ' + anchorTime : '') + ')' + timeWarning
-          : 'anchor note does not contain merkleRoot ' + bundle.merkleRoot });
+      if (typeof txn['round-time'] === 'number') {
+        anchoredAt = new Date(txn['round-time'] * 1000).toISOString();
+        if (bundle.blockTimestamp) {
+          const drift = Math.abs(Date.parse(bundle.blockTimestamp) - txn['round-time'] * 1000) / 1000;
+          if (drift > MAX_TIMESTAMP_DRIFT_SEC) failures.push('bundle blockTimestamp is ' + Math.round(drift) + 's from the on-chain round time');
+        }
+      }
+      steps.push({ name: 'Algorand Anchor', passed: failures.length === 0,
+        detail: failures.length === 0
+          ? bundle.algorandTxnId + ' (round ' + bundle.algorandRound + (anchoredAt ? ', ' + anchoredAt : '') + ')'
+          : 'anchor txn ' + bundle.algorandTxnId + ' rejected: ' + failures.join('; ') });
     } catch (e) {
-      operationalError = true;
-      steps.push({ name: 'Algorand Anchor', passed: false, error: true,
-        detail: 'AlgoNode unreachable — cannot confirm on-chain record (' + e.message + ')' });
+      if (e instanceof NotFoundError) {
+        steps.push({ name: 'Algorand Anchor', passed: false, detail: 'anchor txn ' + bundle.algorandTxnId + ' does not exist' });
+      } else {
+        steps.push({ name: 'Algorand Anchor', passed: false, error: true,
+          detail: 'ledger indexer unreachable — cannot confirm on-chain record (' + e.message + ')' });
+      }
     }
 
-    // Step 5 — Falcon-512 state proof coverage (informational).
-    // Each stpf txn is committed after the interval it attests. The stpf covering
-    // round R is for interval k = ceil(R/256); query starting from that boundary.
+    // Step 5 — informational: indexer-reported state-proof txn covering the round.
     try {
       const round = bundle.algorandRound;
-      const attestedBoundary = Math.ceil(round / 256) * 256;
-      const url = INDEXER_URL + '/v2/transactions?tx-type=stpf&min-round=' + attestedBoundary +
-        '&max-round=' + (attestedBoundary + STATE_PROOF_SCAN_WINDOW) + '&limit=1';
-      const res = await fetch(url);
+      const res = await fetch(INDEXER_URL + '/v2/transactions?tx-type=stpf&min-round=' + round +
+        '&max-round=' + (round + STATE_PROOF_SCAN_WINDOW) + '&limit=20');
       if (!res.ok) throw new Error('indexer ' + res.status);
       const body = await res.json();
-      const txns = body.transactions || [];
-      const covering = txns.find(t => typeof t['confirmed-round'] === 'number');
-      steps.push({ name: 'Falcon-512 State Proof', passed: true, informational: true,
-        detail: covering
-          ? 'state proof transaction found — covers interval up to round ' + attestedBoundary + ' (existence confirmed; cryptographic validation requires an Algorand node)'
-          : 'pending — not yet generated (check back in ~20 min)' });
+      const sp = (body.transactions || []).find(t => {
+        const m = (t['state-proof-transaction'] || {}).message || {};
+        return m['first-attested-round'] <= round && round <= m['latest-attested-round'];
+      });
+      const m = sp ? sp['state-proof-transaction'].message : null;
+      steps.push({ name: 'State Proof (indexer-reported)', passed: true, informational: true,
+        detail: sp
+          ? 'indexer reports a state-proof txn (round ' + sp['confirmed-round'] + ') attesting rounds ' + m['first-attested-round'] + '–' + m['latest-attested-round'] + '; the Falcon-512 proof itself is not verified here'
+          : 'no state-proof txn covering this round reported yet (usually ~20 min after anchoring)' });
     } catch {
-      steps.push({ name: 'Falcon-512 State Proof', passed: true, informational: true,
-        detail: 'pending — ledger API temporarily unavailable' });
+      steps.push({ name: 'State Proof (indexer-reported)', passed: true, informational: true,
+        detail: 'indexer unavailable — state-proof status unknown' });
     }
 
-    const valid = steps.filter(s => !s.informational).every(s => s.passed);
-    return { valid, steps, signers: bundle.docusignSigners || [], operationalError };
+    const blocking = steps.filter(s => !s.informational);
+    const valid = blocking.every(s => s.passed);
+    const operationalError = !valid && blocking.filter(s => !s.passed).every(s => s.error);
+    return { valid, steps, signers, signerSource, documentChecked: Boolean(pdfBytes), anchoredAt, operationalError };
   }
 
   verifyBtn.addEventListener('click', async () => {
@@ -1334,6 +1405,9 @@
       renderSteps(data.steps || [], stepsEl);
       const sg = data.signers || [];
       signersWrap.style.display = sg.length ? 'block' : 'none';
+      document.getElementById('signersTitle').textContent = data.signerSource === 'docusign-connect'
+        ? 'Signers (reported by DocuSign to the issuer)'
+        : 'Signers (asserted by the requester — not verified)';
       renderSigners(sg, signersEl);
       renderBanner(data, banner);
       results.style.display = 'block';

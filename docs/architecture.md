@@ -1,139 +1,131 @@
 # Architecture — PQ Verifiable Archive
 
-For engineers evaluating feasibility. This describes the implemented system, not a
-proposal: the components below exist in `src/` and `verifier/` and run against
-Algorand mainnet.
+For engineers evaluating feasibility. This describes the implemented system: the
+components below are in `src/` and `verifier/` and run against Algorand mainnet.
 
 ---
 
-## Data Flow
+## Entry points
+
+All four entry points call `createProofBundle()` in `src/proofBundleAssembler.ts`:
+
+| Entry point | Auth / metering | Signer source |
+|---|---|---|
+| `POST /api/anchor` (hash only) | x402 payment, rate limit, payment replay guard | `requester-asserted` |
+| `POST /api/archive` (PDF upload, operator UI) | `PORTAL_API_KEY`, rate limit | `requester-asserted` |
+| `POST /webhook/docusign` (Connect 2.0) | HMAC-SHA256 over raw body, any `X-DocuSign-Signature-N`; idempotent per envelope | `docusign-connect` |
+| MCP `anchor_document` | local stdio; daily cap `MCP_MAX_ANCHORS_PER_DAY` | `requester-asserted` |
+
+## Data flow
 
 ```
-        DocuSign Connect Webhook  (envelope status = "completed")
-                  │  X-DocuSign-Signature-1 (HMAC-SHA256), 200 returned immediately
-                  ▼
-        ┌───────────────────────┐
-        │  Webhook Handler       │  src/webhookHandler.ts
-        │  validate HMAC,        │  fetch completed PDF via DocuSign API,
-        │  respond 200, async    │  extract signer metadata (name/email/signedAt)
-        └───────────┬───────────┘
-                    ▼
-        ┌───────────────────────┐
-        │  Document Hasher       │  src/documentHasher.ts
-        │  SHA-256(pdfBytes)     │  buffer only — PDF is never written to disk
-        └───────────┬───────────┘
-                    ▼
-        ┌───────────────────────┐
-        │  Merkle Batcher        │  src/merkleBatcher.ts
-        │  collect N leaf hashes │  build Merkle tree, derive per-leaf proof
-        └───────────┬───────────┘
-                    ▼
-        ┌───────────────────────┐
-        │  Algorand Anchor       │  src/algorandAnchor.ts
-        │  note = {protocol,     │  0-ALGO txn; note <= 1024 bytes
-        │  merkleRoot, batchId}  │  returns { txnId, confirmedRound }
-        └───────────┬───────────┘
-                    ▼
-        ┌───────────────────────┐
-        │  Algorand Network      │  Falcon-512 state proofs cover the block
-        │  (mainnet)             │  automatically, ~every 256 rounds
-        └───────────┬───────────┘
-                    ▼
-        ┌───────────────────────┐
-        │  State Proof Collector │  src/stateProofCollector.ts
-        │  round -> stateProof   │  stateProofRound = ceil(round/256)*256
-        └───────────┬───────────┘
-                    ▼
-        ┌───────────────────────┐
-        │  Bundle Assembler      │  src/proofBundleAssembler.ts
-        │  + ML-DSA-65 sign      │  src/bundleSigner.ts (FIPS-204)
-        └───────────┬───────────┘
-                    ▼
-        bundles/bundle-<envelopeId>.json   (self-contained artifact)
-                    │
-                    ▼
-        ┌───────────────────────┐
-        │  Offline Verifier CLI  │  verifier/verify.ts
-        │  VALID (0) / INVALID(1)│  5 checks; only on-chain reads hit AlgoNode
-        └───────────────────────┘
+ document hash (from client, or SHA-256 of uploaded / DocuSign-downloaded PDF)
+        │
+        ▼
+ Merkle tree (src/merkleBatcher.ts)      leaf = H(0x00‖hash), node = H(0x01‖L‖R)
+        │                                one document per tree today
+        ▼
+ Algorand anchor (src/algorandAnchor.ts) 0-ALGO self-payment from the issuer address
+        │                                note = {"protocol":"pqva/2","op":"anchor",
+        │                                        "merkleRoot", "envelopeCount",
+        │                                        "envelopeIdsSha256"}
+        ▼
+ Bundle signer (src/bundleSigner.ts)     ML-DSA-65 over JCS(bundle without signature)
+        │
+        ▼
+ bundle returned to caller; archive and webhook paths also store the bundle and PDF
+ under PQVA_ARCHIVE_DIR (src/archiveStore.ts)
 ```
+
+Every call anchors one document in its own transaction. The Merkle structure is kept
+so batching can be added later without a format change; there is no batching today.
+
+The uploaded or downloaded PDF **is written to disk** by the archive and webhook
+paths. `/api/anchor` and the MCP tool only ever see the hash.
 
 ---
 
-## Proof Bundle Schema (`pqva/1`)
+## Proof bundle schema (`pqva/2`)
 
-The bundle is the durable artifact. It is JSON, canonicalised with JCS (RFC 8785)
-before signing so the ML-DSA signature is stable across re-serialisation.
+Canonicalised with JCS (RFC 8785) before signing. The signature covers every field
+except `signature`.
 
 | Field | Type | Description |
 |---|---|---|
-| `protocol` | string | Always `"pqva/1"`. Lets future indexers filter by version. |
-| `envelopeId` | string | DocuSign envelope identifier. |
-| `documentHash` | string (hex) | SHA-256 of the completed PDF bytes. The Merkle leaf. |
-| `batchId` | string | Identifier of the batch this leaf belongs to (defaults to the anchor txn ID). |
-| `merkleRoot` | string (hex) | Root of the batch's Merkle tree; the value anchored on-chain. |
-| `merkleProof` | string[] | Ordered sibling hashes from `documentHash` up to `merkleRoot`. |
-| `algorandTxnId` | string | Transaction that carries `merkleRoot` in its note. |
-| `algorandRound` | number | Confirmed round of the anchor transaction. |
-| `blockTimestamp` | string (ISO 8601) | Wall-clock time the anchor was confirmed. |
-| `stateProofRound` | number | Round whose Falcon-512 state proof covers the anchor block. |
-| `signingMetadata.signers[]` | object[] | Optional passkey metadata: `passkeyPublicKey`, `passkeySignature`. |
-| `docusignSigners[]` | object[] | Signer identity: `name`, `email`, `signedAt`. Covered by the signature. |
-| `docusignKeyRegistrationTxnId` | string | On-chain txn that registered DocuSign's ML-DSA public key. |
-| `algorithm` | string | Always `"ml-dsa-65"`. |
-| `signature` | string (hex) | ML-DSA-65 signature over the JCS-canonical bundle minus `signature`. |
+| `protocol` | string | `"pqva/2"` |
+| `envelopeId` | string | Document / envelope identifier |
+| `documentHash` | hex | SHA-256 of the document |
+| `batchId` | string | Anchor txn ID |
+| `merkleRoot` | hex | Root anchored on-chain |
+| `merkleProof` | `{side, hash}[]` | Sibling hashes, with the side each sibling is on |
+| `algorandTxnId` | string | Anchor transaction |
+| `algorandRound` | number | Confirmed round of the anchor transaction |
+| `blockTimestamp` | ISO 8601 | Ledger round time of the anchor (omitted if unavailable) |
+| `stateProofRound` | number | First state-proof interval boundary ≥ `algorandRound` (hint only) |
+| `issuerAddress` | string | Algorand address that sent the anchor |
+| `keyRegistrationTxnId` | string | Issuer's `key-register` txn for this key |
+| `signers[]` | object[] | `name`, `email`, `signedAt` |
+| `signerSource` | string | `docusign-connect` or `requester-asserted` |
+| `algorithm` | string | `"ml-dsa-65"` |
+| `mldsaPublicKey` | hex | Issuer public key (1952 bytes) |
+| `signature` | hex | ML-DSA-65 signature |
 
-The signature covers every field except `signature` itself, so tampering with the
-document hash, signer identity, or anchor reference invalidates verification.
-
----
-
-## Verification (the five checks)
-
-`verify.ts` exits `0` on VALID, `1` on INVALID, `2` on operational error. Order
-front-loads the offline, cheap checks:
-
-| # | Check | Method | Network |
-|---|---|---|---|
-| 1 | ML-DSA-65 attestation | `ml_dsa65.verify(signature, JCS(bundle\\signature), registeredPublicKey)` | Offline |
-| 2 | PDF hash match (if `--pdf` given) | `SHA-256(pdfBytes) === documentHash` | Offline |
-| 3 | Merkle inclusion | walk `merkleProof` from `documentHash` to `merkleRoot` | Offline |
-| 4 | On-chain anchor | AlgoNode `lookupTransactionByID` → note contains `merkleRoot` | AlgoNode (not DocuSign) |
-| 5 | State proof coverage | resolve state proof for `algorandRound` (reported, non-fatal in PoC) | AlgoNode (not DocuSign) |
-
-Only checks 4 and 5 touch the network, and only the public AlgoNode API — never a
-DocuSign server. Checks 1–3 work fully offline, so a bundle remains verifiable even
-if every party's servers are gone.
+Legacy `pqva/1` bundles (sorted-pair Merkle tree without prefixes, `docusignSigners`,
+`docusignKeyRegistrationTxnId`) are still accepted by the verifiers. Their signers are
+always shown as requester-asserted.
 
 ---
 
-## Key Reference
+## Verification
+
+`verifier/verify.ts` exits `0` = valid, `1` = invalid, `2` = could not verify. The
+verifier trusts an **issuer** configured on the command line (`--issuer-address`,
+`--key-reg-txn`, optional `--pk-sha256`); by default it trusts the hosted service's
+issuer and prints that it is doing so. It does not read `.env`.
+
+| # | Check | Network |
+|---|---|---|
+| 1 | ML-DSA-65 signature over the bundle, and the key belongs to the trusted issuer: its fingerprint equals the pinned one, or a `key-register` txn **sent by the issuer address** records it. Any lookup failure is an error, never a pass. For `pqva/2`, `issuerAddress` must equal the trusted issuer. | None if the fingerprint is pinned; otherwise indexer |
+| 2 | `SHA-256(document) === documentHash` (skipped without `--pdf`; the result then says "document not checked") | None |
+| 3 | Merkle proof from `documentHash` to `merkleRoot` | None |
+| 4 | Anchor txn: sender is the trusted issuer, confirmed round equals `algorandRound`, note parses as JSON with matching `protocol`, `op: "anchor"` and exactly `merkleRoot` (and the envelope digest for single-document anchors). `blockTimestamp` must be within 60 s of the ledger round time, which is reported as the anchoring time. | Indexer |
+| 5 | Informational: does the indexer list a state-proof txn whose attested range covers the round? | Indexer |
+
+**Trust in the indexer.** Checks 4 and 5 trust the indexer's responses. A malicious
+indexer could invent an anchor transaction from the issuer address. Pointing the
+verifier at an indexer you control, or cross-checking two, reduces that risk; the
+complete fix is to verify a light-block-header proof against a Falcon-512 state proof,
+which this project does not do yet.
+
+The browser verifier (`public/index.html`, "Verify Independently") implements the same
+checks against the public AlgoNode indexer, pinned to the hosted issuer. The page
+itself is served by the hosted server, so it is not independent of that server.
+
+---
+
+## Key reference
 
 | Choice | Value | Why |
 |---|---|---|
-| Document hash | SHA-256 | Quantum-resistant for integrity (Grover only halves the search space); irreversible, so no PII on-chain. |
-| Institutional signature | ML-DSA-65 (FIPS-204) | Finalised NIST standard, CNSA 2.0-approved, security category 3. Defensible to auditors. |
-| Anchor chain | Algorand mainnet | Native Falcon-512 state proofs (PQC at consensus), public, permissionless, ~$0.001/batch. |
-| Signer identity (today) | Passkey pubkey + signature in anchor note | Falcon state proofs cover the note; upgrades to ML-DSA passkeys with no schema change. |
-| Canonicalisation | JCS (RFC 8785) | Deterministic JSON so the signature is stable across serialisers. |
-| Batching | One txn per N envelopes | Amortises cost; scales to thousands/day at negligible fee. |
+| Document hash | SHA-256 | Collision and preimage resistance hold up against Grover-type quantum attacks at this size |
+| Issuer signature | ML-DSA-65 (FIPS-204) | NIST standard, CNSA 2.0-approved, category 3 |
+| Merkle tree | RFC 6962-style prefixes, ordered pairs | Leaf/node domain separation |
+| Anchor chain | Algorand mainnet | Public, permissionless, low fee; produces Falcon-512 state proofs |
+| Canonicalisation | JCS (RFC 8785) | Deterministic JSON for the signature |
+| Issuer pinning | Address + key fingerprint, configured by the verifier | A bundle cannot name its own trust anchor |
 
 ---
 
-## State Proofs — what Falcon-512 covers, and when
+## Deployment notes
 
-Algorand validators collectively produce a **Falcon-512 state proof** roughly every
-256 rounds (~17 minutes). Each state proof is a post-quantum attestation over the
-ledger state spanning those rounds — it cryptographically commits to every
-transaction in that window, including our anchor transaction and the signer metadata
-it carries.
-
-The collector computes the covering round as `ceil(confirmedRound / 256) * 256` and
-records it in the bundle as `stateProofRound`. Once that state proof is generated,
-the anchor — and therefore the Merkle root and signer metadata — is covered by a
-post-quantum proof produced by the network itself, independent of DocuSign.
-
-Note: there is no off-chain Falcon-512 state-proof *verifier* in any JS library
-today, so the PoC reports state-proof coverage rather than re-verifying the proof
-cryptographically offline. This is a deferred enhancement that requires no change to
-the bundle schema — the `stateProofRound` reference is already captured.
+- Set `NODE_ENV=production`. The server then refuses to start without
+  `PORTAL_API_KEY`, `X402_TREASURY_ADDRESS` and a consistent ML-DSA key pair.
+- Set `TRUST_PROXY_HOPS` to the number of proxies in front of the server (1 on
+  Railway; this is the default when `RAILWAY_ENVIRONMENT_NAME` is set) so rate limits
+  apply per client.
+- Mount a persistent volume and set `PQVA_ARCHIVE_DIR`, or archived files are lost on
+  redeploy.
+- The x402 middleware settles payment after the handler runs. A replay guard rejects
+  reuse of a payment header within a process, but a payment that ultimately fails to
+  settle still produces one anchor. Settling before anchoring would close this
+  completely.

@@ -1,79 +1,65 @@
-const DEFAULT_INDEXER_URL = 'https://mainnet-idx.algonode.cloud';
+import { DEFAULT_INDEXER_URL } from './config.js';
+
 const STATE_PROOF_INTERVAL = 256;
-const POLL_INTERVAL_MS = 30_000;
-const DEFAULT_MAX_WAIT_MS = 10 * 60 * 1000;
-const ROUND_SCAN_WINDOW = 1000;
+// State-proof txns for an interval are committed some rounds after it closes.
+// Scan generously past the anchor round to find the one that attests it.
+const ROUND_SCAN_WINDOW = 2048;
 
-export interface StateProofData {
-  stateProofRound: number;
-  raw: unknown;
-}
-
-function indexerUrl(): string {
-  return process.env.ALGORAND_INDEXER_URL || DEFAULT_INDEXER_URL;
+export interface StateProofSighting {
+  // Round in which the state-proof (stpf) txn was confirmed.
+  confirmedRound: number;
+  firstAttestedRound: number;
+  lastAttestedRound: number;
 }
 
 interface IndexerStpfTransaction {
   'confirmed-round'?: number;
+  'state-proof-transaction'?: {
+    message?: {
+      'first-attested-round'?: number;
+      'latest-attested-round'?: number;
+    };
+  };
 }
 
-interface IndexerStpfResponse {
-  transactions?: IndexerStpfTransaction[];
-}
-
-// State proofs are emitted at interval boundaries; the proof covering round R
-// is the first boundary at or after R. Used only as a hint for logging/UI.
+// State proofs are emitted per 256-round interval; the one attesting round R
+// covers the interval ending at the first boundary at or after R.
 export function coveringRound(round: number): number {
   return Math.ceil(round / STATE_PROOF_INTERVAL) * STATE_PROOF_INTERVAL;
 }
 
-// Query the archival indexer for state-proof (`stpf`) transactions covering the
-// given round. Each stpf txn is committed several rounds *after* the interval
-// it attests — confirmed-round is NOT the attested round. The stpf covering
-// round R is the one for interval k = ceil(R/256), committed at or after
-// round 256k. We therefore start the query at coveringRound(round) so we find
-// the right interval's proof; any stpf confirmed from there covers our round.
-export async function getStateProofForRound(
+// Ask an indexer whether a state-proof txn attesting `round` has been
+// committed, by matching the attested range in its message.
+//
+// IMPORTANT: this is an existence lookup that trusts the indexer's answer. It
+// does NOT verify the Falcon-512 state proof itself, nor a light-block-header
+// proof linking the anchor txn to it. It is reported as informational only.
+export async function findStateProofForRound(
   round: number,
-): Promise<StateProofData | null> {
-  const attestedBoundary = coveringRound(round);
+  indexerUrl: string = DEFAULT_INDEXER_URL,
+  fetchImpl: typeof fetch = fetch,
+): Promise<StateProofSighting | null> {
   const url =
-    `${indexerUrl()}/v2/transactions` +
-    `?tx-type=stpf&min-round=${attestedBoundary}&max-round=${attestedBoundary + ROUND_SCAN_WINDOW}&limit=1`;
-  const res = await fetch(url);
+    `${indexerUrl}/v2/transactions?tx-type=stpf` +
+    `&min-round=${round}&max-round=${round + ROUND_SCAN_WINDOW}&limit=20`;
+  const res = await fetchImpl(url);
+  if (!res.ok) throw new Error(`state proof query failed: ${res.status} ${res.statusText}`);
 
-  if (!res.ok) {
-    throw new Error(`State proof query failed: ${res.status} ${res.statusText}`);
-  }
-
-  const body = (await res.json()) as IndexerStpfResponse;
-  const txns = body.transactions ?? [];
-  const covering = txns.find(
-    t => typeof t['confirmed-round'] === 'number',
-  );
-  if (!covering) return null;
-
-  // Report the attested boundary (the interval end), not the confirmed-round
-  // of the commitment transaction — the latter is higher and misleading.
-  return { stateProofRound: attestedBoundary, raw: covering };
-}
-
-const sleep = (ms: number): Promise<void> => new Promise(resolve => setTimeout(resolve, ms));
-
-export async function waitForStateProof(
-  round: number,
-  maxWaitMs: number = DEFAULT_MAX_WAIT_MS,
-): Promise<StateProofData> {
-  const deadline = Date.now() + maxWaitMs;
-
-  for (;;) {
-    const proof = await getStateProofForRound(round);
-    if (proof) return proof;
-    if (Date.now() + POLL_INTERVAL_MS > deadline) {
-      throw new Error(
-        `State proof covering round ${round} not available within ${maxWaitMs}ms`,
-      );
+  const body = (await res.json()) as { transactions?: IndexerStpfTransaction[] };
+  for (const t of body.transactions ?? []) {
+    const msg = t['state-proof-transaction']?.message;
+    const first = msg?.['first-attested-round'];
+    const last = msg?.['latest-attested-round'];
+    const confirmed = t['confirmed-round'];
+    if (
+      typeof first === 'number' &&
+      typeof last === 'number' &&
+      typeof confirmed === 'number' &&
+      first <= round &&
+      round <= last
+    ) {
+      return { confirmedRound: confirmed, firstAttestedRound: first, lastAttestedRound: last };
     }
-    await sleep(POLL_INTERVAL_MS);
   }
+  return null;
 }

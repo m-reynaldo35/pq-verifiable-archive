@@ -1,7 +1,7 @@
 /**
  * E2E test: real x402 USDC payment → anchor → verify
  *
- * Uses the operator/signer wallet which has USDC on mainnet.
+ * Pays from the wallet in ALGO_SIGNER_MNEMONIC (needs USDC on mainnet).
  * Run: npx tsx scripts/test-x402-payment.ts
  */
 import algosdk from 'algosdk';
@@ -12,11 +12,12 @@ import { encodePaymentSignatureHeader, decodePaymentRequiredHeader } from '@x402
 
 const API_URL = process.env.PQVA_API_URL ?? 'https://pq-verifiable-archive-production.up.railway.app';
 
-// Operator/signer mnemonic — address 2FBKPEID..., has USDC on mainnet
-// Override with ALGO_SIGNER_MNEMONIC env var
-const PAYER_MNEMONIC =
-  process.env.ALGO_SIGNER_MNEMONIC ??
-  'receive now tattoo motor same desert napkin scan coral transfer wing odor toy bean neglect comfort ride pig change chapter try latin olympic above spirit';
+// Payer wallet mnemonic — must come from the environment. Never commit one.
+const PAYER_MNEMONIC = process.env.ALGO_SIGNER_MNEMONIC;
+if (!PAYER_MNEMONIC) {
+  console.error('ALGO_SIGNER_MNEMONIC must be set to a funded payer wallet mnemonic');
+  process.exit(2);
+}
 
 const TEST_CONTENT = `pqva-e2e-test-${Date.now()}`;
 const DOCUMENT_HASH = createHash('sha256').update(TEST_CONTENT).digest('hex');
@@ -34,7 +35,7 @@ async function main() {
   console.log(`API: ${API_URL}\n`);
 
   // Build x402 client with signer registered for Algorand mainnet
-  const account = algosdk.mnemonicToSecretKey(PAYER_MNEMONIC);
+  const account = algosdk.mnemonicToSecretKey(PAYER_MNEMONIC as string);
   const privateKeyBase64 = Buffer.from(account.sk).toString('base64');
   const signer = toClientAvmSigner(privateKeyBase64);
   const scheme = new ExactAvmScheme(signer, { algodUrl: 'https://mainnet-api.algonode.cloud' });
@@ -107,7 +108,7 @@ async function main() {
   console.log(`     Round:        ${result.algorandRound}`);
 
   // Step 5: verify the returned bundle via multipart POST /api/verify
-  await step('5. Verify proof bundle (all 5 checks)', async () => {
+  await step('5. Verify proof bundle', async () => {
     const formData = new FormData();
     formData.append(
       'bundle',

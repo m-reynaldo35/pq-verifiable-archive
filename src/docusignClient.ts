@@ -132,9 +132,13 @@ export async function getSignerMetadata(envelopeId: string): Promise<SignerMetad
   }
 
   const body = (await res.json()) as RecipientsResponse;
-  return (body.signers ?? []).map(signer => ({
-    name: signer.name ?? '',
-    email: signer.email ?? '',
-    signedAt: signer.signedDateTime ?? signer.deliveredDateTime ?? '',
-  }));
+  // Only recipients DocuSign reports as having signed. deliveredDateTime is when
+  // the envelope reached them, not a signing time, so it is never substituted.
+  return (body.signers ?? [])
+    .filter(signer => typeof signer.signedDateTime === 'string' && signer.signedDateTime !== '')
+    .map(signer => ({
+      name: signer.name ?? '',
+      email: signer.email ?? '',
+      signedAt: signer.signedDateTime as string,
+    }));
 }

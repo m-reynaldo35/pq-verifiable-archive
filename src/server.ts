@@ -1,7 +1,7 @@
 import 'dotenv/config';
 // Polyfill globalThis.crypto for Node.js environments where it isn't auto-set.
 // Required by @noble/hashes (used by @noble/post-quantum for ML-DSA signing).
-import { webcrypto } from 'node:crypto';
+import { webcrypto, createHash, timingSafeEqual } from 'node:crypto';
 if (!globalThis.crypto) (globalThis as unknown as { crypto: unknown }).crypto = webcrypto;
 import express from 'express';
 import multer from 'multer';
@@ -9,94 +9,120 @@ import { rateLimit } from 'express-rate-limit';
 import path from 'node:path';
 import { readFile } from 'node:fs/promises';
 import { webhookRouter } from './webhookHandler.js';
-import { ProofBundle, DocuSignSigner, signBundle } from './bundleSigner.js';
-import { verifyBundle } from './verifyBundle.js';
-import { anchorToAlgorand } from './algorandAnchor.js';
-import { buildMerkleTree, getMerkleRoot, getMerkleProof } from './merkleBatcher.js';
+import { assertSigningKeysConsistent } from './bundleSigner.js';
+import { verifyBundle, VerifyOptions } from './verifyBundle.js';
 import { hashDocument } from './documentHasher.js';
-import { assembleBundle } from './proofBundleAssembler.js';
-import { StateProofData, coveringRound } from './stateProofCollector.js';
-import { requireAnchorPayment } from './anchorPaywall.js';
+import { createProofBundle } from './proofBundleAssembler.js';
+import { requireAnchorPayment, paymentReplayGuard } from './anchorPaywall.js';
+import { validateSigners, validateEnvelopeId } from './signers.js';
+import { isProduction, trustAnchorFromEnv } from './config.js';
 import {
   initArchive,
   listRecords,
   getRecord,
   saveRecord,
+  newRecordId,
   getBundlePath,
   getPdfPath,
   ArchiveRecord,
 } from './archiveStore.js';
 
 const EXPLORER_TX_BASE = 'https://explorer.perawallet.app/tx/';
+const PORT = Number(process.env.PORT ?? 3000);
 
 function slugify(name: string): string {
-  return name
-    .replace(/\.[^.]+$/, '')
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-+|-+$/g, '')
-    .slice(0, 40) || 'document';
+  return (
+    name
+      .replace(/\.[^.]+$/, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 40) || 'document'
+  );
 }
 
-// Reject malformed signer records before they reach the bundle / index.json.
-// Returns an error message, or null if all signers are valid.
-function validateSigners(signers: DocuSignSigner[]): string | null {
-  for (let i = 0; i < signers.length; i++) {
-    const s = signers[i] as Partial<DocuSignSigner> | null;
-    const where = `signer ${i + 1}`;
-    if (!s || typeof s !== 'object') return `${where} is not an object`;
-    if (typeof s.name !== 'string' || s.name.trim() === '') return `${where} has an invalid name`;
-    if (typeof s.email !== 'string' || !s.email.includes('@')) return `${where} has an invalid email`;
-    if (typeof s.signedAt !== 'string' || Number.isNaN(Date.parse(s.signedAt))) {
-      return `${where} has an invalid signedAt date`;
-    }
-  }
-  return null;
+// ---------------------------------------------------------------------------
+// Startup checks. In production the service refuses to start in an insecure
+// configuration instead of silently running open.
+// ---------------------------------------------------------------------------
+const startupProblems: string[] = [];
+if (!process.env.PORTAL_API_KEY) startupProblems.push('PORTAL_API_KEY is not set (archive and document endpoints would be public)');
+if (!process.env.X402_TREASURY_ADDRESS) startupProblems.push('X402_TREASURY_ADDRESS is not set (/api/anchor would be free and unmetered)');
+try {
+  assertSigningKeysConsistent();
+} catch (e) {
+  startupProblems.push(`signing key check failed: ${(e as Error).message}`);
+}
+if (startupProblems.length > 0) {
+  for (const p of startupProblems) process.stderr.write(`${isProduction() ? 'fatal' : 'warn'}: ${p}\n`);
+  if (isProduction()) process.exit(1);
 }
 
-const PORT = Number(process.env.PORT ?? 3000);
+const verifyOptions: VerifyOptions = {
+  trust: trustAnchorFromEnv(),
+  indexerUrl: process.env.ALGORAND_INDEXER_URL || undefined,
+};
 
 const app = express();
 
-// Fix 2: API key auth for archive/document endpoints.
-// Set PORTAL_API_KEY env var to enable; omit to leave open (dev/self-hosted).
-function requireApiKey(
-  req: express.Request,
-  res: express.Response,
-  next: express.NextFunction,
-): void {
+// Behind Railway's (or any) reverse proxy, req.ip is the proxy's address unless
+// Express is told how many hops to trust. Without this every client shares one
+// rate-limit bucket.
+app.set('trust proxy', Number(process.env.TRUST_PROXY_HOPS ?? (process.env.RAILWAY_ENVIRONMENT_NAME ? 1 : 0)));
+
+app.use((_req, res, next) => {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader(
+    'Content-Security-Policy',
+    "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
+      "font-src 'self' https://fonts.gstatic.com; img-src 'self' data:; connect-src 'self' https://mainnet-idx.algonode.cloud; " +
+      "frame-ancestors 'none'; base-uri 'none'; form-action 'self'",
+  );
+  next();
+});
+
+// API key auth for operator-only endpoints (archive upload, document listing
+// and downloads). Without PORTAL_API_KEY these are only reachable outside
+// production (see startup checks above).
+function apiKeyDigest(value: string): Buffer {
+  return createHash('sha256').update(value).digest();
+}
+
+function requireApiKey(req: express.Request, res: express.Response, next: express.NextFunction): void {
   const key = process.env.PORTAL_API_KEY;
-  if (!key) { next(); return; }
+  if (!key) {
+    next();
+    return;
+  }
+  const auth = req.headers['authorization'];
   const provided =
-    (req.headers['x-api-key'] as string | undefined) ??
-    req.headers['authorization']?.replace(/^Bearer /, '');
-  if (!provided || provided !== key) {
+    req.header('x-api-key') ?? (typeof auth === 'string' && auth.startsWith('Bearer ') ? auth.slice(7) : undefined);
+  if (!provided || !timingSafeEqual(apiKeyDigest(provided), apiKeyDigest(key))) {
     res.status(401).json({ error: 'unauthorized' });
     return;
   }
   next();
 }
 
-// Fix 1: Rate limiters for CPU/disk-intensive endpoints.
-const verifyLimiter = rateLimit({
-  windowMs: 60_000,
-  max: 20,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'too many verify requests — try again in a minute' },
-});
+function limiter(max: number, message: string) {
+  return rateLimit({
+    windowMs: 60_000,
+    max,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: { error: message },
+  });
+}
 
-const archiveLimiter = rateLimit({
-  windowMs: 60_000,
-  max: 10,
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: { error: 'too many archive requests — try again in a minute' },
-});
+const verifyLimiter = limiter(20, 'too many verify requests — try again in a minute');
+const archiveLimiter = limiter(10, 'too many archive requests — try again in a minute');
+const anchorLimiter = limiter(10, 'too many anchor requests — try again in a minute');
 
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
 
-app.use('/webhook/docusign', express.raw({ type: 'application/json' }));
+app.use('/webhook/docusign', express.raw({ type: 'application/json', limit: '1mb' }));
 app.use('/webhook', webhookRouter);
 
 app.use(express.static(path.join(process.cwd(), 'public')));
@@ -123,52 +149,43 @@ app.post(
       return;
     }
 
-    const raw = bundleFile.buffer.toString('utf8');
-    let bundle: ProofBundle;
+    let bundle: unknown;
     try {
-      bundle = JSON.parse(raw) as ProofBundle;
+      bundle = JSON.parse(bundleFile.buffer.toString('utf8'));
     } catch {
       res.status(400).json({ valid: false, steps: [], signers: [], error: 'bundle is not valid JSON' });
       return;
     }
 
-    const pdfBuffer = files?.pdf?.[0]?.buffer;
-
     try {
-      const result = await verifyBundle(bundle, pdfBuffer);
-      res.json(result);
+      res.json(await verifyBundle(bundle, files?.pdf?.[0]?.buffer, verifyOptions));
     } catch (e) {
       console.error(`verify failed: ${(e as Error).message}`);
-      res.status(500).json({ valid: false, steps: [], signers: [], error: (e as Error).message });
+      res.status(500).json({ valid: false, steps: [], signers: [], error: 'verification failed due to an internal error' });
     }
   },
 );
 
-app.post('/api/archive', requireApiKey, archiveLimiter, upload.single('pdf'), async (req, res) => {
+app.post('/api/archive', archiveLimiter, requireApiKey, upload.single('pdf'), async (req, res) => {
   const file = req.file;
   if (!file) {
     res.status(400).json({ error: 'pdf file is required' });
     return;
   }
 
-  let signers: DocuSignSigner[];
+  let rawSigners: unknown;
   try {
-    signers = JSON.parse((req.body as { signers?: string }).signers ?? '[]') as DocuSignSigner[];
+    rawSigners = JSON.parse((req.body as { signers?: string }).signers ?? '[]');
   } catch {
     res.status(400).json({ error: 'signers field is not valid JSON' });
     return;
   }
-
-  // Validate each signer to keep poisoned data out of index.json / bundles.
-  if (!Array.isArray(signers)) {
-    res.status(400).json({ error: 'signers must be an array' });
+  const checked = validateSigners(rawSigners);
+  if ('error' in checked) {
+    res.status(400).json({ error: checked.error });
     return;
   }
-  const signerError = validateSigners(signers);
-  if (signerError) {
-    res.status(400).json({ error: signerError });
-    return;
-  }
+  const signers = checked.signers;
 
   res.setHeader('Content-Type', 'application/x-ndjson');
   res.setHeader('X-Accel-Buffering', 'no');
@@ -181,69 +198,47 @@ app.post('/api/archive', requireApiKey, archiveLimiter, upload.single('pdf'), as
   try {
     const pdfBuffer = file.buffer;
     const documentHash = hashDocument(pdfBuffer);
-    const id = `doc-${Date.now()}-${slugify(file.originalname)}`;
+    const slug = slugify(file.originalname);
+    const id = newRecordId(slug);
 
     write({ step: 'hash', status: 'done', detail: `sha256: ${documentHash}` });
-
-    const tree = buildMerkleTree([documentHash]);
-    const merkleRoot = getMerkleRoot(tree);
-    write({ step: 'merkle', status: 'done', detail: 'batch of 1' });
-
     write({ step: 'anchor', status: 'running', detail: 'Anchoring to Algorand mainnet…' });
 
-    const { txId, confirmedRound, blockTime } = await anchorToAlgorand(merkleRoot, [id]);
-    const explorerUrl = EXPLORER_TX_BASE + txId;
+    const bundle = await createProofBundle({
+      documentHash,
+      envelopeId: id,
+      signers,
+      signerSource: 'requester-asserted',
+    });
     write({
       step: 'anchor',
       status: 'done',
-      detail: `txn ${txId} · round ${confirmedRound} · ${explorerUrl}`,
+      detail: `txn ${bundle.algorandTxnId} · round ${bundle.algorandRound} · ${EXPLORER_TX_BASE + bundle.algorandTxnId}`,
     });
+    write({ step: 'sign', status: 'done', detail: 'ML-DSA-65 (NIST FIPS-204)' });
 
-    const stateProof: StateProofData = {
-      stateProofRound: Math.ceil(confirmedRound / 256) * 256,
-      raw: null,
-    };
-
-    const bundle = assembleBundle({
-      envelopeId: id,
-      pdfBuffer,
-      txId,
-      confirmedRound,
-      merkleTree: tree,
-      stateProof,
-      anchorTime: blockTime,
-      docusignSigners: signers,
-    });
-    write({ step: 'sign', status: 'done', detail: 'ML-DSA-65 (NIST FIPS-204, quantum-safe)' });
-
-    const archivedAt = new Date().toISOString();
     const record: ArchiveRecord = {
       id,
-      title: slugify(file.originalname),
+      envelopeId: id,
+      title: slug,
       filename: file.originalname,
       documentHash,
       signers,
-      txId,
-      round: confirmedRound,
-      blockTimestamp: blockTime,
-      stateProofRound: stateProof.stateProofRound,
-      archivedAt,
+      signerSource: 'requester-asserted',
+      txId: bundle.algorandTxnId,
+      round: bundle.algorandRound,
+      blockTimestamp: bundle.blockTimestamp,
+      stateProofRound: bundle.stateProofRound,
+      archivedAt: new Date().toISOString(),
     };
     await saveRecord(record, JSON.stringify(bundle, null, 2), pdfBuffer);
     write({ step: 'save', status: 'done', detail: 'Saved to archive' });
-
-    write({
-      step: 'stateproof',
-      status: 'info',
-      detail: 'pending — Falcon coverage in ~20 min (informational)',
-    });
-
+    write({ step: 'stateproof', status: 'info', detail: 'state proof for this round usually appears in ~20 min (informational)' });
     write({ done: true, record });
     res.end();
   } catch (e) {
-    const message = (e as Error).message;
-    console.error(`archive failed: ${message}`);
-    write({ step: 'error', status: 'error', detail: message });
+    console.error(`archive failed: ${(e as Error).message}`);
+    write({ step: 'error', status: 'error', detail: 'archiving failed due to an internal error' });
     res.end();
   }
 });
@@ -270,56 +265,42 @@ app.get('/api/documents/:id/pdf', requireApiKey, (req, res) => {
   res.download(getPdfPath(record.id), record.filename);
 });
 
-app.post('/api/documents/:id/verify', requireApiKey, upload.single('pdf'), async (req, res) => {
+app.post('/api/documents/:id/verify', verifyLimiter, requireApiKey, upload.single('pdf'), async (req, res) => {
   const record = getRecord(String(req.params.id));
   if (!record) {
     res.status(404).json({ valid: false, steps: [], signers: [], error: 'document not found' });
     return;
   }
 
-  let bundle: ProofBundle;
-  try {
-    const raw = await readFile(getBundlePath(record.id), 'utf8');
-    bundle = JSON.parse(raw) as ProofBundle;
-  } catch (e) {
-    console.error(`load bundle failed: ${(e as Error).message}`);
-    res.status(500).json({ valid: false, steps: [], signers: [], error: 'could not load bundle' });
-    return;
-  }
-
+  let bundle: unknown;
   let pdfBuffer: Buffer;
   try {
+    bundle = JSON.parse(await readFile(getBundlePath(record.id), 'utf8'));
     pdfBuffer = req.file ? req.file.buffer : await readFile(getPdfPath(record.id));
   } catch (e) {
-    console.error(`load pdf failed: ${(e as Error).message}`);
-    res.status(500).json({ valid: false, steps: [], signers: [], error: 'could not load pdf' });
+    console.error(`load archive files failed: ${(e as Error).message}`);
+    res.status(500).json({ valid: false, steps: [], signers: [], error: 'could not load archived files' });
     return;
   }
 
   try {
-    const result = await verifyBundle(bundle, pdfBuffer);
-    res.json(result);
+    res.json(await verifyBundle(bundle, pdfBuffer, verifyOptions));
   } catch (e) {
     console.error(`verify failed: ${(e as Error).message}`);
-    res.status(500).json({ valid: false, steps: [], signers: [], error: (e as Error).message });
+    res.status(500).json({ valid: false, steps: [], signers: [], error: 'verification failed due to an internal error' });
   }
 });
 
-// x402 payment gate — only active when X402_TREASURY_ADDRESS is set.
+// /api/anchor: rate limit and replay guard first, then the x402 paywall.
+app.use('/api/anchor', anchorLimiter, paymentReplayGuard());
 if (process.env.X402_TREASURY_ADDRESS) {
   app.use(requireAnchorPayment());
-} else {
-  process.stderr.write('warn: X402_TREASURY_ADDRESS not set — /api/anchor payment gate disabled\n');
 }
 
 // POST /api/anchor — agent-friendly JSON endpoint for hash anchoring.
 // Accepts { hash, envelope_id?, signers? }, returns a proof bundle.
 app.post('/api/anchor', express.json({ limit: '64kb' }), async (req, res) => {
-  const body = req.body as {
-    hash?: unknown;
-    envelope_id?: unknown;
-    signers?: unknown;
-  };
+  const body = (req.body ?? {}) as { hash?: unknown; envelope_id?: unknown; signers?: unknown };
 
   const hash = body.hash;
   if (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash)) {
@@ -327,70 +308,62 @@ app.post('/api/anchor', express.json({ limit: '64kb' }), async (req, res) => {
     return;
   }
 
-  const envelopeId =
-    typeof body.envelope_id === 'string' ? body.envelope_id : `doc-${Date.now()}`;
+  let envelopeId = `doc-${Date.now()}`;
+  if (body.envelope_id !== undefined) {
+    const valid = validateEnvelopeId(body.envelope_id);
+    if (!valid) {
+      res.status(400).json({ error: 'envelope_id must be 1-128 characters of [A-Za-z0-9._:-]' });
+      return;
+    }
+    envelopeId = valid;
+  }
 
-  let docusignSigners: DocuSignSigner[] = [];
-  if (Array.isArray(body.signers)) {
-    // Fix 4: cap signers array to prevent abuse.
-    if (body.signers.length > 50) {
-      res.status(400).json({ error: 'signers array must not exceed 50 entries' });
-      return;
-    }
-    const signerError = validateSigners(body.signers as DocuSignSigner[]);
-    if (signerError) {
-      res.status(400).json({ error: signerError });
-      return;
-    }
-    docusignSigners = body.signers as DocuSignSigner[];
+  const checked = validateSigners(body.signers);
+  if ('error' in checked) {
+    res.status(400).json({ error: checked.error });
+    return;
   }
 
   try {
-    const tree = buildMerkleTree([hash]);
-    const merkleRoot = getMerkleRoot(tree);
-
-    const { txId, confirmedRound, blockTime } = await anchorToAlgorand(merkleRoot, [envelopeId]);
-
-    // Fix 5: structured audit log for every successful anchor.
-    console.log(JSON.stringify({
-      event: 'anchor',
-      hash,
-      envelopeId,
-      algorandTxnId: txId,
-      round: confirmedRound,
-      timestamp: new Date().toISOString(),
-      ip: req.ip,
-    }));
-
-    const merkleProof = getMerkleProof(tree, hash);
-    const unsigned: Omit<ProofBundle, 'signature'> = {
-      protocol: 'pqva/1',
-      envelopeId,
+    const bundle = await createProofBundle({
       documentHash: hash,
-      batchId: txId,
-      merkleRoot,
-      merkleProof,
-      algorandTxnId: txId,
-      algorandRound: confirmedRound,
-      ...(blockTime ? { blockTimestamp: blockTime } : {}),
-      stateProofRound: coveringRound(confirmedRound),
-      signingMetadata: { signers: [] },
-      docusignSigners,
-      docusignKeyRegistrationTxnId: process.env.DOCUSIGN_KEY_REGISTRATION_TXN_ID ?? '',
-      algorithm: 'ml-dsa-65',
-    };
+      envelopeId,
+      signers: checked.signers,
+      signerSource: 'requester-asserted',
+    });
 
-    const bundle = signBundle(unsigned);
-    res.json({ success: true, algorandTxnId: txId, algorandRound: confirmedRound, bundle });
+    console.log(
+      JSON.stringify({
+        event: 'anchor',
+        hash,
+        envelopeId,
+        algorandTxnId: bundle.algorandTxnId,
+        round: bundle.algorandRound,
+        timestamp: new Date().toISOString(),
+        ip: req.ip,
+      }),
+    );
+
+    res.json({ success: true, algorandTxnId: bundle.algorandTxnId, algorandRound: bundle.algorandRound, bundle });
   } catch (e) {
     console.error(`anchor failed: ${(e as Error).message}`);
-    res.status(500).json({ error: (e as Error).message });
+    res.status(500).json({ error: 'anchor failed due to an internal error' });
   }
 });
 
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
-  const message = err.message.includes('File too large') ? 'file too large (max 25 MB)' : err.message;
-  res.status(400).json({ valid: false, steps: [], signers: [], error: message });
+  if (err instanceof multer.MulterError) {
+    const message = err.code === 'LIMIT_FILE_SIZE' ? 'file too large (max 25 MB)' : 'invalid upload';
+    res.status(400).json({ valid: false, steps: [], signers: [], error: message });
+    return;
+  }
+  const status = (err as { status?: number }).status;
+  if (typeof status === 'number' && status >= 400 && status < 500) {
+    res.status(status).json({ valid: false, steps: [], signers: [], error: 'bad request' });
+    return;
+  }
+  console.error(`unhandled error: ${err.message}`);
+  res.status(500).json({ valid: false, steps: [], signers: [], error: 'internal error' });
 });
 
 if (!process.env.DOCUSIGN_HMAC_KEY) {
@@ -400,7 +373,7 @@ if (!process.env.DOCUSIGN_HMAC_KEY) {
 initArchive()
   .then(() => {
     app.listen(PORT, () => {
-      console.log(`PQ Verifiable Archive bridge listening on :${PORT}`);
+      console.log(`PQ Verifiable Archive listening on :${PORT}`);
     });
   })
   .catch(e => {

@@ -3,11 +3,11 @@
 const EXPLORER_TX_BASE = 'https://explorer.perawallet.app/tx/';
 
 const STEP_SUBTITLES = {
-  'ML-DSA-65 Signature': 'Receipt authenticity (quantum-safe signature)',
-  'PDF Hash': 'Document fingerprint match',
-  'Merkle Inclusion': 'Document is in the sealed batch',
-  'Algorand Anchor': 'Public ledger record confirmed',
-  'Falcon-512 State Proof': 'Quantum-safe network attestation (~20 min after anchoring)',
+  'ML-DSA-65 Signature': 'Receipt signed by the trusted issuer (post-quantum signature)',
+  'Document Hash': 'Document fingerprint match',
+  'Merkle Inclusion': 'Document hash is committed under the anchored root',
+  'Algorand Anchor': 'Issuer\'s ledger record confirmed (sender, round, note)',
+  'State Proof (indexer-reported)': 'Whether the indexer lists a covering state-proof txn (not cryptographically checked)',
 };
 
 function esc(s) {
@@ -27,7 +27,7 @@ function explorerLink(detail) {
 function renderSteps(steps, container) {
   container.innerHTML = '';
   for (const s of steps) {
-    const isInfo = s.informational || s.name === 'State Proof' || s.name === 'Falcon-512 State Proof';
+    const isInfo = Boolean(s.informational);
     const row = document.createElement('div');
     let iconClass, iconChar, stateClass;
     if (isInfo) {
@@ -58,22 +58,25 @@ function renderSteps(steps, container) {
 
 function renderBanner(result, container) {
   const steps = result.steps || [];
-  const hasSkipped = steps.some(s => s.skipped);
-  const isInfo = s => s.informational || s.name === 'State Proof' || s.name === 'Falcon-512 State Proof';
-  const failing = steps.filter(s => !isInfo(s) && !s.passed);
-  const operationalError = failing.length > 0 && failing.every(s => s.error);
+  const failing = steps.filter(s => !s.informational && !s.passed);
+  const operationalError = result.operationalError ?? (failing.length > 0 && failing.every(s => s.error));
+  const documentChecked = result.documentChecked ?? !steps.some(s => s.skipped);
+  const asOf = result.anchoredAt ? ' · anchored ' + result.anchoredAt + ' (ledger time)' : '';
 
   if (result.valid) {
     container.className = 'banner valid';
-    const sub = hasSkipped
-      ? 'Original document not verified — upload the PDF to complete verification'
-      : 'On-chain record confirmed. DocuSign attestation verified offline.';
-    container.innerHTML = 'VALID ✓ — record confirmed<span class="sub">' + sub + '</span>';
+    if (documentChecked) {
+      container.innerHTML = 'VALID ✓ — document matches the issuer\'s anchored record' +
+        '<span class="sub">Signature, issuer key and on-chain anchor confirmed' + esc(asOf) + '</span>';
+    } else {
+      container.innerHTML = 'BUNDLE VALID — document not checked' +
+        '<span class="sub">The receipt is authentic' + esc(asOf) + ', but no document was supplied. Upload the original to check it.</span>';
+    }
     return;
   }
   if (operationalError) {
     container.className = 'banner warn';
-    container.innerHTML = 'COULD NOT VERIFY<span class="sub">Network or configuration error — try again or check the server.</span>';
+    container.innerHTML = 'COULD NOT VERIFY<span class="sub">Network or configuration error — try again later.</span>';
     return;
   }
   container.className = 'banner invalid';

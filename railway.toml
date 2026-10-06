@@ -4,8 +4,13 @@ builder = "nixpacks"
 [build.nixpacksPlan.phases.setup]
 nixPkgs = ["nodejs_20"]
 
+# Required service variables (the server refuses to start without them when
+# NODE_ENV=production): PORTAL_API_KEY, X402_TREASURY_ADDRESS, ALGORAND_MNEMONIC,
+# PQVA_MLDSA_PUBLIC_KEY, PQVA_MLDSA_PRIVATE_KEY, PQVA_KEY_REGISTRATION_TXN_ID.
+# Attach a Railway volume and set PQVA_ARCHIVE_DIR to its mount path, otherwise
+# archived PDFs and bundles are lost on every redeploy.
 [deploy]
-startCommand = "npx tsx src/server.ts"
+startCommand = "npm start"
 healthcheckPath = "/health"
 healthcheckTimeout = 60
 restartPolicyType = "on_failure"

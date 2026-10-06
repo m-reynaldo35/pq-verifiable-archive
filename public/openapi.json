@@ -2,9 +2,11 @@
   "openapi": "3.1.0",
   "info": {
     "title": "PQ Verifiable Archive",
-    "version": "1.0.0",
+    "version": "2.0.0",
     "description": "Post-quantum document anchoring to Algorand mainnet with ML-DSA-65 (NIST FIPS-204) signatures. Pay $0.01 USDC per anchor via x402. Verify for free.",
-    "license": { "name": "MIT" },
+    "license": {
+      "name": "MIT"
+    },
     "contact": {
       "url": "https://github.com/m-reynaldo35/pq-verifiable-archive"
     }
@@ -28,8 +30,14 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "status": { "type": "string", "example": "ok" },
-                    "timestamp": { "type": "string", "format": "date-time" }
+                    "status": {
+                      "type": "string",
+                      "example": "ok"
+                    },
+                    "timestamp": {
+                      "type": "string",
+                      "format": "date-time"
+                    }
                   }
                 }
               }
@@ -42,14 +50,16 @@
       "post": {
         "summary": "Anchor a document hash to Algorand mainnet",
         "operationId": "anchorDocument",
-        "description": "Requires an x402 payment of $0.01 USDC on Algorand mainnet. Send the request without a payment header first to receive the 402 payment-required instructions, then resend with the payment-signature header.",
+        "description": "Requires an x402 payment of $0.01 USDC on Algorand mainnet. Send the request without a payment header first to receive the 402 payment-required instructions, then resend with the payment-signature header. Each payment header can be used once (reuse returns 409). Rate limited to 10 requests per minute per client.",
         "requestBody": {
           "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "type": "object",
-                "required": ["hash"],
+                "required": [
+                  "hash"
+                ],
                 "properties": {
                   "hash": {
                     "type": "string",
@@ -59,20 +69,34 @@
                   },
                   "envelope_id": {
                     "type": "string",
-                    "description": "Optional identifier for the document or signing envelope"
+                    "description": "Optional identifier for the document or signing envelope",
+                    "pattern": "^[A-Za-z0-9._:-]{1,128}$"
                   },
                   "signers": {
                     "type": "array",
-                    "description": "Optional list of signers to embed in the proof bundle",
+                    "description": "Optional signers (max 50). Recorded with signerSource 'requester-asserted': the bundle proves the requester claimed them, not that they signed.",
                     "items": {
                       "type": "object",
-                      "required": ["name", "email", "signedAt"],
+                      "required": [
+                        "name",
+                        "email",
+                        "signedAt"
+                      ],
                       "properties": {
-                        "name": { "type": "string" },
-                        "email": { "type": "string", "format": "email" },
-                        "signedAt": { "type": "string", "format": "date-time" }
+                        "name": {
+                          "type": "string"
+                        },
+                        "email": {
+                          "type": "string",
+                          "format": "email"
+                        },
+                        "signedAt": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
                       }
-                    }
+                    },
+                    "maxItems": 50
                   }
                 }
               }
@@ -87,25 +111,111 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "success": { "type": "boolean" },
-                    "algorandTxnId": { "type": "string", "description": "Algorand mainnet transaction ID" },
-                    "algorandRound": { "type": "integer", "description": "Confirmed block round" },
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "algorandTxnId": {
+                      "type": "string",
+                      "description": "Algorand mainnet transaction ID"
+                    },
+                    "algorandRound": {
+                      "type": "integer",
+                      "description": "Confirmed block round"
+                    },
                     "bundle": {
                       "type": "object",
                       "description": "Self-contained proof bundle signed with ML-DSA-65",
                       "properties": {
-                        "protocol": { "type": "string", "example": "pqva/1" },
-                        "envelopeId": { "type": "string" },
-                        "documentHash": { "type": "string" },
-                        "merkleRoot": { "type": "string" },
-                        "merkleProof": { "type": "array", "items": { "type": "string" } },
-                        "algorandTxnId": { "type": "string" },
-                        "algorandRound": { "type": "integer" },
-                        "blockTimestamp": { "type": "string", "format": "date-time" },
-                        "stateProofRound": { "type": "integer" },
-                        "algorithm": { "type": "string", "example": "ml-dsa-65" },
-                        "mldsaPublicKey": { "type": "string" },
-                        "signature": { "type": "string" }
+                        "protocol": {
+                          "type": "string",
+                          "example": "pqva/2"
+                        },
+                        "envelopeId": {
+                          "type": "string"
+                        },
+                        "documentHash": {
+                          "type": "string"
+                        },
+                        "batchId": {
+                          "type": "string"
+                        },
+                        "merkleRoot": {
+                          "type": "string",
+                          "description": "SHA-256(0x00 || documentHash) for a single-document anchor"
+                        },
+                        "merkleProof": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "side": {
+                                "type": "string",
+                                "enum": [
+                                  "left",
+                                  "right"
+                                ]
+                              },
+                              "hash": {
+                                "type": "string"
+                              }
+                            }
+                          }
+                        },
+                        "algorandTxnId": {
+                          "type": "string"
+                        },
+                        "algorandRound": {
+                          "type": "integer"
+                        },
+                        "blockTimestamp": {
+                          "type": "string",
+                          "format": "date-time"
+                        },
+                        "stateProofRound": {
+                          "type": "integer"
+                        },
+                        "issuerAddress": {
+                          "type": "string",
+                          "description": "Algorand address that sent the anchor txn"
+                        },
+                        "keyRegistrationTxnId": {
+                          "type": "string"
+                        },
+                        "signers": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "name": {
+                                "type": "string"
+                              },
+                              "email": {
+                                "type": "string"
+                              },
+                              "signedAt": {
+                                "type": "string",
+                                "format": "date-time"
+                              }
+                            }
+                          }
+                        },
+                        "signerSource": {
+                          "type": "string",
+                          "enum": [
+                            "docusign-connect",
+                            "requester-asserted"
+                          ]
+                        },
+                        "algorithm": {
+                          "type": "string",
+                          "example": "ml-dsa-65"
+                        },
+                        "mldsaPublicKey": {
+                          "type": "string"
+                        },
+                        "signature": {
+                          "type": "string"
+                        }
                       }
                     }
                   }
@@ -118,7 +228,9 @@
             "headers": {
               "payment-required": {
                 "description": "base64(JSON) x402 payment requirements",
-                "schema": { "type": "string" }
+                "schema": {
+                  "type": "string"
+                }
               }
             }
           },
@@ -127,23 +239,35 @@
           },
           "500": {
             "description": "Server error (Algorand anchor or signing failed)"
+          },
+          "409": {
+            "description": "This payment header was already used"
+          },
+          "429": {
+            "description": "Rate limit exceeded"
           }
         },
-        "security": [{ "x402": [] }]
+        "security": [
+          {
+            "x402": []
+          }
+        ]
       }
     },
     "/api/verify": {
       "post": {
         "summary": "Verify a proof bundle (always free)",
         "operationId": "verifyBundle",
-        "description": "Runs 5 verification checks: ML-DSA-65 signature, PDF hash match, Merkle inclusion, Algorand anchor, Falcon-512 state proof. No payment required.",
+        "description": "Verifies a bundle against the issuer this server trusts: ML-DSA-65 signature and issuer key, document hash (if a PDF is supplied), Merkle inclusion, and the Algorand anchor txn (sender, round, note). Also reports, informationally, whether the indexer lists a covering state-proof txn (the Falcon-512 proof is not verified). The response includes documentChecked, signerSource and anchoredAt. No payment required.",
         "requestBody": {
           "required": true,
           "content": {
             "multipart/form-data": {
               "schema": {
                 "type": "object",
-                "required": ["bundle"],
+                "required": [
+                  "bundle"
+                ],
                 "properties": {
                   "bundle": {
                     "type": "string",
@@ -168,17 +292,29 @@
                 "schema": {
                   "type": "object",
                   "properties": {
-                    "valid": { "type": "boolean" },
+                    "valid": {
+                      "type": "boolean"
+                    },
                     "steps": {
                       "type": "array",
                       "items": {
                         "type": "object",
                         "properties": {
-                          "name": { "type": "string" },
-                          "passed": { "type": "boolean" },
-                          "skipped": { "type": "boolean" },
-                          "informational": { "type": "boolean" },
-                          "detail": { "type": "string" }
+                          "name": {
+                            "type": "string"
+                          },
+                          "passed": {
+                            "type": "boolean"
+                          },
+                          "skipped": {
+                            "type": "boolean"
+                          },
+                          "informational": {
+                            "type": "boolean"
+                          },
+                          "detail": {
+                            "type": "string"
+                          }
                         }
                       }
                     },
@@ -187,9 +323,15 @@
                       "items": {
                         "type": "object",
                         "properties": {
-                          "name": { "type": "string" },
-                          "email": { "type": "string" },
-                          "signedAt": { "type": "string" }
+                          "name": {
+                            "type": "string"
+                          },
+                          "email": {
+                            "type": "string"
+                          },
+                          "signedAt": {
+                            "type": "string"
+                          }
                         }
                       }
                     }

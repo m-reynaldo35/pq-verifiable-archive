@@ -1,22 +1,22 @@
 {
   "name": "pq-verifiable-archive",
-  "version": "1.0.0",
-  "description": "Post-quantum document anchoring for AI agents. Anchor any SHA-256 hash to Algorand mainnet with ML-DSA-65 (NIST FIPS-204) signatures. Verify offline decades later without trusting any vendor.",
+  "version": "2.0.0",
+  "description": "Post-quantum document anchoring for AI agents. Anchor a SHA-256 hash to Algorand mainnet and get a proof bundle signed with ML-DSA-65 (NIST FIPS-204). Verify it later against a pinned issuer with an open-source verifier.",
   "homepage": "https://github.com/m-reynaldo35/pq-verifiable-archive",
   "license": "MIT",
   "tools": [
     {
       "name": "anchor_document",
-      "description": "Anchor a SHA-256 document hash to Algorand mainnet with post-quantum ML-DSA-65 attestation. Returns a self-contained proof bundle verifiable offline without trusting any vendor.",
+      "description": "Anchor a SHA-256 document hash to Algorand mainnet and return a proof bundle signed with ML-DSA-65. Costs a network fee per call and is rate-limited per day. Signers passed in are recorded as requester-asserted (unverified).",
       "parameters": {
         "hash": "64-character lowercase hex SHA-256 hash of the document",
         "envelope_id": "(optional) identifier for the document or envelope",
-        "signers": "(optional) array of {name, email, signedAt} signer records"
+        "signers": "(optional) array of {name, email, signedAt}; stored as requester-asserted, not verified"
       }
     },
     {
       "name": "verify_bundle",
-      "description": "Run all 5 post-quantum verification checks on a proof bundle: ML-DSA-65 signature, PDF hash match, Merkle inclusion, Algorand anchor, and Falcon-512 state proof coverage.",
+      "description": "Verify a proof bundle against the configured trusted issuer: ML-DSA-65 signature and issuer key, document hash (if provided), Merkle inclusion, and the Algorand anchor txn (sender, round, note). Also reports, informationally, whether an indexer lists a covering state-proof txn (the Falcon-512 proof itself is not verified).",
       "parameters": {
         "bundle": "JSON proof bundle returned by anchor_document",
         "pdf_base64": "(optional) base64-encoded PDF to verify document hash"
@@ -26,17 +26,23 @@
   "install": {
     "type": "stdio",
     "command": "npx",
-    "args": ["tsx", "src/mcp-server.ts"],
+    "args": [
+      "-y",
+      "pq-verifiable-archive"
+    ],
     "env": {
-      "ALGORAND_MNEMONIC": "25-word Algorand mnemonic for the signing wallet",
-      "DOCUSIGN_MLDSA_PUBLIC_KEY": "hex-encoded ML-DSA-65 public key (from npm run register-key)",
-      "DOCUSIGN_MLDSA_PRIVATE_KEY": "hex-encoded ML-DSA-65 private key",
-      "DOCUSIGN_KEY_REGISTRATION_TXN_ID": "Algorand txn ID from npm run register-key"
+      "ALGORAND_MNEMONIC": "25-word Algorand mnemonic for the issuer wallet",
+      "PQVA_MLDSA_PUBLIC_KEY": "hex-encoded ML-DSA-65 public key (from npm run register-key)",
+      "PQVA_MLDSA_PRIVATE_KEY": "hex-encoded ML-DSA-65 private key",
+      "PQVA_KEY_REGISTRATION_TXN_ID": "Algorand txn ID from npm run register-key",
+      "PQVA_TRUSTED_ISSUER_ADDRESS": "(optional) issuer address verify_bundle trusts; defaults to the hosted service",
+      "PQVA_TRUSTED_KEY_REG_TXN_ID": "(optional) that issuer's key registration txn ID",
+      "MCP_MAX_ANCHORS_PER_DAY": "(optional) daily anchor cap, default 25"
     }
   },
   "hostedApi": {
     "url": "https://pq-verifiable-archive-production.up.railway.app",
-    "payment": "x402 — $0.01 USDC per anchor on Algorand mainnet",
+    "payment": "x402 \u2014 $0.01 USDC per anchor on Algorand mainnet",
     "verifyEndpoint": "POST /api/verify (always free)"
   }
 }

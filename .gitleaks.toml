@@ -1,0 +1,8 @@
+[extend]
+useDefault = true
+
+# Algorand / BIP-39 style mnemonics: 25 lowercase words in a quoted string.
+[[rules]]
+id = "algorand-mnemonic"
+description = "Algorand 25-word mnemonic"
+regex = '''['"`]([a-z]{3,8} ){24}[a-z]{3,8}['"`]'''

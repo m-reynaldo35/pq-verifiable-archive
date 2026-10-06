@@ -1,41 +1,25 @@
 import 'dotenv/config';
-import { readFile } from 'fs/promises';
+import { readFile, writeFile } from 'fs/promises';
 import { hashDocument } from '../src/documentHasher.js';
-import { buildMerkleTree, getMerkleRoot } from '../src/merkleBatcher.js';
-import { anchorToAlgorand } from '../src/algorandAnchor.js';
-import { assembleBundle, saveBundleToFile } from '../src/proofBundleAssembler.js';
-import { StateProofData } from '../src/stateProofCollector.js';
+import { createProofBundle } from '../src/proofBundleAssembler.js';
 
+// Re-anchor the demo sample PDF and write a fresh pqva/2 bundle for /demo.
 async function main() {
   const pdf = await readFile('assets/sample-contract.pdf');
-  const hash = hashDocument(pdf);
-  console.log('PDF hash:', hash);
-
-  const tree = buildMerkleTree([hash]);
-  const merkleRoot = getMerkleRoot(tree);
+  const documentHash = hashDocument(pdf);
+  console.log('PDF hash:', documentHash);
   console.log('Anchoring to Algorand...');
 
-  const { txId, confirmedRound, blockTime } = await anchorToAlgorand(merkleRoot, ['sample-contract']);
-  console.log('txId:', txId);
-  console.log('confirmedRound:', confirmedRound);
-  console.log('blockTime:', blockTime);
-
-  const stateProof: StateProofData = {
-    stateProofRound: Math.ceil(confirmedRound / 256) * 256,
-    raw: null,
-  };
-
-  const bundle = assembleBundle({
+  const bundle = await createProofBundle({
+    documentHash,
     envelopeId: 'sample-contract',
-    pdfBuffer: pdf,
-    txId,
-    confirmedRound,
-    merkleTree: tree,
-    stateProof,
-    anchorTime: blockTime,
+    signers: [],
+    signerSource: 'requester-asserted',
   });
 
-  await saveBundleToFile(bundle, 'bundles/sample-contract-bundle.json');
+  console.log('txId:', bundle.algorandTxnId);
+  console.log('round:', bundle.algorandRound);
+  await writeFile('bundles/sample-contract-bundle.json', JSON.stringify(bundle, null, 2) + '\n', 'utf8');
   console.log('Bundle written to bundles/sample-contract-bundle.json');
 }
 

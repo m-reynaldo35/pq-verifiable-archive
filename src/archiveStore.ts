@@ -1,13 +1,16 @@
 import { mkdir, readFile, writeFile, rename, copyFile, access } from 'fs/promises';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
-import { ProofBundle } from './bundleSigner.js';
+import type { ProofBundle, Signer, SignerSource } from './bundleSigner.js';
 
 export interface ArchiveRecord {
   id: string;
+  envelopeId: string;
   title: string;
   filename: string;
   documentHash: string;
-  signers: { name: string; email: string; signedAt: string }[];
+  signers: Signer[];
+  signerSource: SignerSource;
   txId: string;
   round: number;
   // May be absent when the ledger round time could not be fetched.
@@ -16,7 +19,9 @@ export interface ArchiveRecord {
   archivedAt: string;
 }
 
-const ARCHIVE_DIR = path.resolve('archive');
+// Set PQVA_ARCHIVE_DIR to a mounted persistent volume in production. The
+// container filesystem on Railway (and most PaaS hosts) is wiped on redeploy.
+const ARCHIVE_DIR = path.resolve(process.env.PQVA_ARCHIVE_DIR ?? 'archive');
 const BUNDLES_DIR = path.join(ARCHIVE_DIR, 'bundles');
 const PDFS_DIR = path.join(ARCHIVE_DIR, 'pdfs');
 const INDEX_PATH = path.join(ARCHIVE_DIR, 'index.json');
@@ -27,6 +32,14 @@ const SEED_ID = 'sample-contract';
 
 let records: ArchiveRecord[] = [];
 
+// Serialises writes so concurrent saves cannot interleave index updates.
+let writeChain: Promise<unknown> = Promise.resolve();
+function withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
+  const run = writeChain.then(fn, fn);
+  writeChain = run.catch(() => undefined);
+  return run;
+}
+
 async function exists(p: string): Promise<boolean> {
   try {
     await access(p);
@@ -36,10 +49,14 @@ async function exists(p: string): Promise<boolean> {
   }
 }
 
-async function writeIndexAtomic(): Promise<void> {
-  const tmp = INDEX_PATH + '.tmp';
-  await writeFile(tmp, JSON.stringify(records, null, 2), 'utf8');
-  await rename(tmp, INDEX_PATH);
+async function writeFileAtomic(target: string, data: string | Buffer): Promise<void> {
+  const tmp = `${target}.${randomUUID()}.tmp`;
+  await writeFile(tmp, data);
+  await rename(tmp, target);
+}
+
+function writeIndex(): Promise<void> {
+  return writeFileAtomic(INDEX_PATH, JSON.stringify(records, null, 2));
 }
 
 async function seedSample(): Promise<void> {
@@ -47,40 +64,49 @@ async function seedSample(): Promise<void> {
     process.stderr.write('warn: sample contract bundle or pdf missing — archive seeded empty\n');
     return;
   }
-  const bundleJson = await readFile(SEED_BUNDLE_SRC, 'utf8');
-  const bundle = JSON.parse(bundleJson) as ProofBundle;
+  const bundle = JSON.parse(await readFile(SEED_BUNDLE_SRC, 'utf8')) as ProofBundle;
 
   await copyFile(SEED_BUNDLE_SRC, getBundlePath(SEED_ID));
   await copyFile(SEED_PDF_SRC, getPdfPath(SEED_ID));
 
-  const record: ArchiveRecord = {
-    id: SEED_ID,
-    title: 'sample-contract',
-    filename: 'sample-contract.pdf',
-    documentHash: bundle.documentHash,
-    signers: bundle.docusignSigners ?? [],
-    txId: bundle.algorandTxnId,
-    round: bundle.algorandRound,
-    blockTimestamp: bundle.blockTimestamp,
-    stateProofRound: bundle.stateProofRound,
-    archivedAt: bundle.blockTimestamp ?? new Date().toISOString(),
-  };
-  records = [record];
-  await writeIndexAtomic();
+  records = [
+    {
+      id: SEED_ID,
+      envelopeId: bundle.envelopeId,
+      title: 'sample-contract',
+      filename: 'sample-contract.pdf',
+      documentHash: bundle.documentHash,
+      signers: bundle.protocol === 'pqva/2' ? bundle.signers : bundle.docusignSigners ?? [],
+      signerSource: bundle.protocol === 'pqva/2' ? bundle.signerSource : 'requester-asserted',
+      txId: bundle.algorandTxnId,
+      round: bundle.algorandRound,
+      blockTimestamp: bundle.blockTimestamp,
+      stateProofRound: bundle.stateProofRound,
+      archivedAt: bundle.blockTimestamp ?? new Date().toISOString(),
+    },
+  ];
+  await writeIndex();
 }
 
 export async function initArchive(): Promise<void> {
-  await mkdir(ARCHIVE_DIR, { recursive: true });
+  if (!process.env.PQVA_ARCHIVE_DIR && process.env.RAILWAY_ENVIRONMENT_NAME) {
+    process.stderr.write(
+      'warn: PQVA_ARCHIVE_DIR not set — archive is on ephemeral disk and will be lost on redeploy; mount a volume\n',
+    );
+  }
   await mkdir(BUNDLES_DIR, { recursive: true });
   await mkdir(PDFS_DIR, { recursive: true });
 
   if (await exists(INDEX_PATH)) {
-    const raw = await readFile(INDEX_PATH, 'utf8');
-    records = JSON.parse(raw) as ArchiveRecord[];
+    records = JSON.parse(await readFile(INDEX_PATH, 'utf8')) as ArchiveRecord[];
     if (records.length === 0) await seedSample();
     return;
   }
   await seedSample();
+}
+
+export function newRecordId(slug: string): string {
+  return `doc-${randomUUID().slice(0, 12)}-${slug}`;
 }
 
 export function listRecords(): ArchiveRecord[] {
@@ -91,6 +117,10 @@ export function getRecord(id: string): ArchiveRecord | undefined {
   return records.find(r => r.id === id);
 }
 
+export function findRecordByEnvelopeId(envelopeId: string): ArchiveRecord | undefined {
+  return records.find(r => r.envelopeId === envelopeId);
+}
+
 export function getBundlePath(id: string): string {
   return path.join(BUNDLES_DIR, `${id}.json`);
 }
@@ -99,19 +129,12 @@ export function getPdfPath(id: string): string {
   return path.join(PDFS_DIR, `${id}.pdf`);
 }
 
-export async function saveRecord(
-  record: ArchiveRecord,
-  bundleJson: string,
-  pdfBuffer: Buffer,
-): Promise<void> {
-  const bundleTmp = getBundlePath(record.id) + '.tmp';
-  const pdfTmp = getPdfPath(record.id) + '.tmp';
-  await writeFile(bundleTmp, bundleJson, 'utf8');
-  await rename(bundleTmp, getBundlePath(record.id));
-  await writeFile(pdfTmp, pdfBuffer);
-  await rename(pdfTmp, getPdfPath(record.id));
-
-  records = records.filter(r => r.id !== record.id);
-  records.push(record);
-  await writeIndexAtomic();
+export function saveRecord(record: ArchiveRecord, bundleJson: string, pdfBuffer: Buffer): Promise<void> {
+  return withWriteLock(async () => {
+    if (records.some(r => r.id === record.id)) throw new Error(`archive record ${record.id} already exists`);
+    await writeFileAtomic(getBundlePath(record.id), bundleJson);
+    await writeFileAtomic(getPdfPath(record.id), pdfBuffer);
+    records = [...records, record];
+    await writeIndex();
+  });
 }

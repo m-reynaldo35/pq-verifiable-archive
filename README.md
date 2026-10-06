@@ -1,10 +1,10 @@
 # PQ Verifiable Archive
 
-Post-quantum tamper-evidence for any signed document. Anchor a SHA-256 hash to Algorand mainnet, get back a self-contained proof bundle signed with ML-DSA-65 (NIST FIPS-204) that anyone can verify offline — decades from now, without trusting any vendor.
+Post-quantum tamper-evidence for any signed document. Anchor a SHA-256 hash to Algorand mainnet and get back a self-contained proof bundle signed with ML-DSA-65 (NIST FIPS-204). Anyone can verify it later with the open-source verifier: the signature, document hash and Merkle proof check offline against a pinned issuer key, and the anchor is confirmed against any archival Algorand indexer.
 
 Works with any signing tool: DocuSign, HelloSign, Adobe Sign, or a plain PDF. You bring the signed document; this adds the quantum-resistant notarization layer.
 
-**Live on Algorand mainnet.** Real transactions, real ML-DSA-65 signatures, working offline verifier.
+**Live on Algorand mainnet.** Real transactions, real ML-DSA-65 signatures, working open-source verifier.
 
 ## Why this exists
 
@@ -14,12 +14,14 @@ Today's e-signature platforms use RSA or ECDSA. Both are broken by a large-enoug
 
 | Property | DocuSign / Adobe Sign | PQ Verifiable Archive |
 |---|---|---|
-| Quantum-resistant | No (RSA / ECDSA) | Yes — ML-DSA-65 + Algorand Falcon-512 state proofs |
-| Offline-verifiable | No — requires vendor servers | Yes — 3 of 5 checks need no network at all |
-| Vendor-independent | No — trust the platform | Yes — verify against a public permissionless chain |
-| PII on-chain | n/a | None — only irreversible SHA-256 hashes are anchored |
+| Post-quantum issuer signature | No (RSA / ECDSA) | Yes — ML-DSA-65 (FIPS-204) |
+| Verifiable without the vendor's servers | No | Yes — 3 checks offline (with a pinned key fingerprint), anchor check via any archival Algorand indexer |
+| Issuer pinning | Platform CA | Verifier pins the issuer's Algorand address and key fingerprint |
+| Data on-chain | n/a | Hashes only (pseudonymous — see [compliance FAQ](docs/compliance-faq.md)) |
 | Works with any signer | No | Yes — bring any signed PDF |
-| Standards | RSA / ECDSA | NIST FIPS-204, SHA-256, JCS (RFC 8785) |
+| Standards | RSA / ECDSA | NIST FIPS-204, SHA-256, JCS (RFC 8785), RFC 6962-style Merkle tree |
+
+**What the verifier does not do yet:** it does not verify Algorand's Falcon-512 state proofs. It trusts the indexer's report of the anchor transaction (after checking sender, round and note) and only reports state-proof coverage as information.
 
 ## Use as an MCP tool (AI agents)
 
@@ -33,9 +35,9 @@ Add to `claude_desktop_config.json` or `.claude/settings.json`:
       "args": ["tsx", "/path/to/pq-verifiable-archive/src/mcp-server.ts"],
       "env": {
         "ALGORAND_MNEMONIC": "your 25-word mnemonic",
-        "DOCUSIGN_MLDSA_PUBLIC_KEY": "hex-encoded ML-DSA-65 public key",
-        "DOCUSIGN_MLDSA_PRIVATE_KEY": "hex-encoded ML-DSA-65 private key",
-        "DOCUSIGN_KEY_REGISTRATION_TXN_ID": "algorand txn id from npm run register-key"
+        "PQVA_MLDSA_PUBLIC_KEY": "hex-encoded ML-DSA-65 public key",
+        "PQVA_MLDSA_PRIVATE_KEY": "hex-encoded ML-DSA-65 private key",
+        "PQVA_KEY_REGISTRATION_TXN_ID": "algorand txn id from npm run register-key"
       }
     }
   }
@@ -43,8 +45,10 @@ Add to `claude_desktop_config.json` or `.claude/settings.json`:
 ```
 
 Claude (or any MCP-compatible agent) can then call:
-- `anchor_document` — anchor a SHA-256 hash to Algorand, receive a proof bundle
-- `verify_bundle` — run all 5 post-quantum verification checks on any bundle
+- `anchor_document` — anchor a SHA-256 hash to Algorand, receive a proof bundle (capped at `MCP_MAX_ANCHORS_PER_DAY`, default 25)
+- `verify_bundle` — verify a bundle against the trusted issuer (`PQVA_TRUSTED_*`, default: the hosted service)
+
+Signers passed to `anchor_document` or the REST API are recorded as `requester-asserted`: the bundle proves you claimed them, not that they signed.
 
 **Self-hosted MCP is free.** You pay only Algorand's network fee (~$0.0002 per anchor).
 
@@ -89,28 +93,36 @@ npx tsx scripts/generate-sample-pdf.ts
 npm run verify -- --bundle bundles/sample-contract-bundle.json --pdf assets/sample-contract.pdf
 ```
 
-Required env vars (see `.env.example`): `ALGORAND_MNEMONIC`, `DOCUSIGN_MLDSA_PUBLIC_KEY`,
-`DOCUSIGN_MLDSA_PRIVATE_KEY`, `DOCUSIGN_KEY_REGISTRATION_TXN_ID`.
+Required env vars (see `.env.example`): `ALGORAND_MNEMONIC`, `PQVA_MLDSA_PUBLIC_KEY`,
+`PQVA_MLDSA_PRIVATE_KEY`, `PQVA_KEY_REGISTRATION_TXN_ID` (the old `DOCUSIGN_*` names
+still work but are deprecated).
 
-Optional: `X402_TREASURY_ADDRESS` to enable pay-per-anchor on `/api/anchor`.
+With `NODE_ENV=production` the server also requires `PORTAL_API_KEY` (operator
+archive UI and `/api/documents`) and `X402_TREASURY_ADDRESS` (pay-per-anchor), and
+refuses to start without them. Mount a volume and set `PQVA_ARCHIVE_DIR` so the
+archive survives redeploys.
+
+Verifying your own bundles: pass your issuer to the verifier, e.g.
+`npm run verify -- --bundle b.json --pdf doc.pdf --issuer-address <addr> --key-reg-txn <txid> --pk-sha256 <hex>`
+(`npm run register-key` prints these values).
 
 ## How verification works
 
-The verifier (`npm run verify`) exits `0` = VALID, `1` = INVALID, `2` = operational error.
+The verifier (`npm run verify`) exits `0` = VALID, `1` = INVALID, `2` = could not verify. Without `--pdf` it prints `BUNDLE VALID — document not checked`. By default it trusts the hosted service's issuer and says so; use `--issuer-address`/`--key-reg-txn`/`--pk-sha256` for any other issuer. It does not read `.env`.
 
-| Step | Check | Offline? |
+| Step | Check | Network |
 |---|---|---|
-| 1 | ML-DSA-65 signature over bundle (NIST FIPS-204) | Yes |
-| 2 | SHA-256(PDF) matches `bundle.documentHash` | Yes |
-| 3 | Merkle proof walks from hash to root | Yes |
-| 4 | Algorand txn note contains merkle root | AlgoNode (not DocuSign) |
-| 5 | Falcon-512 state proof covers the anchor round | AlgoNode (not DocuSign) |
+| 1 | ML-DSA-65 signature, and the key belongs to the trusted issuer (pinned fingerprint, or a key-registration txn sent by the issuer address). Fails closed. | None when the fingerprint is pinned |
+| 2 | SHA-256(document) matches `documentHash` | None |
+| 3 | Merkle proof from the document hash to the root | None |
+| 4 | Anchor txn sent by the issuer, in the claimed round, with exactly this root in its note; ledger round time is the anchoring time | Algorand indexer |
+| 5 | Informational: indexer lists a state-proof txn covering the round (not verified) | Algorand indexer |
 
 ## Who uses this
 
 - **HR platforms** — offer letters, NDAs, termination agreements with quantum-proof audit trail
 - **Legal tech** — tamper-evident contract archive that survives vendor shutdown
-- **Healthcare** — patient consent forms (no PII on-chain — HIPAA-compatible)
+- **Healthcare** — patient consent forms (no names or content on-chain; hashes are pseudonymous, so assess under your own HIPAA/GDPR analysis)
 - **AI agents** — autonomous agents executing agreements need immutable, verifiable receipts
 - **Anyone signing documents today** that need to be verifiable in 2040
 
@@ -118,18 +130,22 @@ The verifier (`npm run verify`) exits `0` = VALID, `1` = INVALID, `2` = operatio
 
 ```json
 {
-  "protocol": "pqva/1",
+  "protocol": "pqva/2",
   "envelopeId": "contract-2026-001",
   "documentHash": "0569e7cb...",
-  "merkleRoot": "97d5d40b...",
-  "merkleProof": ["9b1b4a3c...", "34b53407..."],
+  "batchId": "QIS2LWKE...",
+  "merkleRoot": "5d2c81f0...",
+  "merkleProof": [],
   "algorandTxnId": "QIS2LWKE...",
   "algorandRound": 62052659,
-  "blockTimestamp": "2026-06-11T13:50:11.808Z",
+  "blockTimestamp": "2026-06-11T13:50:11.000Z",
   "stateProofRound": 62052864,
-  "docusignSigners": [
-    { "name": "Jordan Avery", "email": "jordan@acme.example", "signedAt": "2026-06-11T13:48:02Z" }
+  "issuerAddress": "JJNDY3TL...",
+  "keyRegistrationTxnId": "BUVBKZAY...",
+  "signers": [
+    { "name": "Jordan Avery", "email": "jordan@acme.example", "signedAt": "2026-06-11T13:48:02.000Z" }
   ],
+  "signerSource": "requester-asserted",
   "algorithm": "ml-dsa-65",
   "mldsaPublicKey": "...",
   "signature": "75483d62..."
@@ -143,10 +159,10 @@ Full schema: [`docs/architecture.md`](docs/architecture.md)
 | Component | Choice |
 |---|---|
 | Post-quantum signatures | `@noble/post-quantum` — ML-DSA-65 (NIST FIPS-204) |
-| Blockchain | Algorand mainnet — Falcon-512 state proofs |
+| Blockchain | Algorand mainnet |
 | AI agent interface | `@modelcontextprotocol/sdk` — MCP stdio server |
 | Payments | `@x402-avm/express` — x402 on Algorand (GoPlausible) |
-| Merkle trees | `merkletreejs` — SHA-256 |
+| Merkle trees | built in — SHA-256, RFC 6962-style leaf/node prefixes |
 | Canonical JSON | `canonicalize` — JCS, RFC 8785 |
 | Runtime | TypeScript + Node.js via `tsx` |
 

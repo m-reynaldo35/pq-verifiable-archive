@@ -1,13 +1,18 @@
 import algosdk from 'algosdk';
 import { createHash } from 'crypto';
 
+import { DEFAULT_INDEXER_URL } from './config.js';
+
 const DEFAULT_NODE_URL = 'https://mainnet-api.algonode.cloud';
-const DEFAULT_INDEXER_URL = 'https://mainnet-idx.algonode.cloud';
 const NOTE_LIMIT_BYTES = 1024;
+
+export const ANCHOR_PROTOCOL = 'pqva/2';
 
 export interface AnchorResult {
   txId: string;
   confirmedRound: number;
+  // Address that sent (and signed) the anchor txn — the bundle issuer.
+  sender: string;
   // Undefined when the ledger round time could not be fetched after retries —
   // callers must omit the timestamp rather than substitute a local clock.
   blockTime?: string;
@@ -45,14 +50,14 @@ async function fetchBlockTimeWithRetry(txId: string): Promise<string> {
   );
 }
 
-function envelopeIdsDigest(envelopeIds: string[]): string {
+export function envelopeIdsDigest(envelopeIds: string[]): string {
   const sorted = [...envelopeIds].sort();
   return createHash('sha256').update(JSON.stringify(sorted)).digest('hex');
 }
 
 function buildNote(merkleRoot: string, envelopeIds: string[]): Uint8Array {
   const payload = {
-    protocol: 'pqva/1',
+    protocol: ANCHOR_PROTOCOL,
     op: 'anchor',
     merkleRoot,
     envelopeCount: envelopeIds.length,
@@ -101,5 +106,5 @@ export async function anchorToAlgorand(
     blockTime = undefined;
   }
 
-  return { txId: txid, confirmedRound, blockTime };
+  return { txId: txid, confirmedRound, sender: account.addr.toString(), blockTime };
 }
