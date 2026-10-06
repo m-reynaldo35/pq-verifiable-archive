@@ -9,6 +9,9 @@ import { createHmac } from 'crypto';
 import { spawnSync } from 'child_process';
 import { access } from 'fs/promises';
 import path from 'path';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
 
 const PORT = Number(process.env.PORT ?? 3000);
 const POLL_INTERVAL_MS = 1000;
