@@ -11,4 +11,7 @@ regex = '''['"`]([a-z]{3,8} ){24}[a-z]{3,8}['"`]'''
 # Algorand transaction ID is not a secret).
 [allowlist]
 description = "Pinned public Algorand trust-anchor values"
-regexes = ['''BUVBKZAYLHFLAX4WLD7KA7OQZAE4QYHGY3SHY3TVKVJFGQXP3IJA''']
+regexes = [
+  '''BUVBKZAYLHFLAX4WLD7KA7OQZAE4QYHGY3SHY3TVKVJFGQXP3IJA''',
+  '''S7NGS2LDQXB73R4XSSOS6VRCS66ZL3I5S7FQWXHB4YIXLDISLZ7Q''',
+]

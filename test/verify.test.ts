@@ -7,7 +7,7 @@ import { buildMerkleTree, getMerkleRoot, getMerkleProof } from '../src/merkleBat
 import { signBundle, ProofBundleV2, UnsignedBundleV2 } from '../src/bundleSigner.js';
 import { envelopeIdsDigest } from '../src/algorandAnchor.js';
 import { verifyBundle } from '../src/verifyBundle.js';
-import { HOSTED_ISSUER, TrustAnchor } from '../src/config.js';
+import { HOSTED_ISSUERS, LEGACY_HOSTED_ISSUER, TrustAnchor } from '../src/config.js';
 
 // ---- fixtures ---------------------------------------------------------------
 const sha = (b: Buffer | string) => createHash('sha256').update(b).digest('hex');
@@ -214,7 +214,7 @@ test('real pqva/1 mainnet sample bundle verifies offline-key + recorded chain da
     [bundle.algorandTxnId]: {
       body: {
         transaction: {
-          sender: HOSTED_ISSUER.issuerAddress,
+          sender: LEGACY_HOSTED_ISSUER.issuerAddress,
           'confirmed-round': 62053315,
           'round-time': 1781187628,
           note: 'eyJwcm90b2NvbCI6InBxdmEvMSIsIm9wIjoiYW5jaG9yIiwibWVya2xlUm9vdCI6IjdkZjEzZmQ3Zjk5YmFlYjAzNWU0YTU1YTQ4Mjk2YWYwN2Q0NTliZDlmMzNkMTkwZmE5YmVlZTQ0MzUwZTAzNTMiLCJlbnZlbG9wZUNvdW50IjoxLCJlbnZlbG9wZUlkc1NoYTI1NiI6IjJmZGY4NTMwMTNiNmEyNDEzODkxNWZjMzJhZTAzODFhYjk1NTM5ZWZjYmM2OGI4OTVmYTA4MTY1YTFhZDU3NGEifQ==',
@@ -222,8 +222,20 @@ test('real pqva/1 mainnet sample bundle verifies offline-key + recorded chain da
       },
     },
   };
-  const r = await verifyBundle(bundle, pdf, { trust: HOSTED_ISSUER, fetchImpl: fakeFetch, indexerUrl: 'http://indexer.test' });
+  const r = await verifyBundle(bundle, pdf, { trust: HOSTED_ISSUERS, fetchImpl: fakeFetch, indexerUrl: 'http://indexer.test' });
   assert.equal(r.valid, true, JSON.stringify(r.steps));
   assert.match(step(r, 'ML-DSA-65 Signature').detail, /pinned issuer key \(offline\)/);
   assert.equal(r.signerSource, 'requester-asserted');
+});
+
+test('with several trusted issuers, a bundle is checked against its own issuer only', async () => {
+  const bundle = makeBundle();
+  chain[ANCHOR_TXN] = anchorTxn(bundle);
+  const other: TrustAnchor = { issuerAddress: 'O'.repeat(58), keyRegistrationTxnId: txid('O') };
+  const r = await verifyBundle(bundle, PDF, { ...opts, trust: [other, trust] });
+  assert.equal(r.valid, true, JSON.stringify(r.steps));
+
+  const onlyOther = await verifyBundle(bundle, PDF, { ...opts, trust: [other] });
+  assert.equal(onlyOther.valid, false);
+  assert.match(onlyOther.steps[0].detail, /not a trusted issuer/);
 });

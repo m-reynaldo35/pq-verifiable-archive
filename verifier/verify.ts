@@ -4,7 +4,7 @@
 import { readFile } from 'fs/promises';
 import { Command } from 'commander';
 import { verifyBundle } from '../src/verifyBundle.js';
-import { DEFAULT_INDEXER_URL, HOSTED_ISSUER, TrustAnchor } from '../src/config.js';
+import { DEFAULT_INDEXER_URL, HOSTED_ISSUERS, TrustAnchor } from '../src/config.js';
 
 const EXIT_VALID = 0;
 const EXIT_INVALID = 1;
@@ -20,7 +20,7 @@ async function main() {
   program
     .description(
       'Verify a pqva proof bundle. Exit codes: 0 = valid, 1 = invalid, 2 = could not verify (network/config).\n' +
-        'Without --issuer-address the built-in issuer of the hosted pq-verifiable-archive service is trusted.',
+        'Without --issuer-address the built-in issuers of the hosted pq-verifiable-archive service are trusted.',
     )
     .requiredOption('--bundle <path>', 'path to proof bundle JSON')
     .option('--pdf <path>', 'path to the original document; without it only the bundle is verified')
@@ -41,16 +41,17 @@ async function main() {
     indexer: string;
   }>();
 
-  let trust: TrustAnchor;
+  let trust: TrustAnchor[];
   if (opts.issuerAddress) {
     if (!opts.keyRegTxn) errorOut('--key-reg-txn is required with --issuer-address');
-    trust = { issuerAddress: opts.issuerAddress, keyRegistrationTxnId: opts.keyRegTxn, pkSha256: opts.pkSha256 };
+    trust = [{ issuerAddress: opts.issuerAddress, keyRegistrationTxnId: opts.keyRegTxn, pkSha256: opts.pkSha256 }];
   } else {
-    trust = { ...HOSTED_ISSUER };
+    trust = HOSTED_ISSUERS.map(a => ({ ...a }));
   }
   if (opts.publicKeyFile) {
     try {
-      trust.publicKeyHex = (await readFile(opts.publicKeyFile, 'utf8')).trim();
+      const publicKeyHex = (await readFile(opts.publicKeyFile, 'utf8')).trim();
+      for (const a of trust) a.publicKeyHex = publicKeyHex;
     } catch {
       errorOut(`cannot read public key file: ${opts.publicKeyFile}`);
     }
@@ -72,7 +73,10 @@ async function main() {
     }
   }
 
-  console.log(`Trusted issuer: ${trust.issuerAddress}${opts.issuerAddress ? '' : ' (built-in default: hosted service)'}`);
+  console.log(
+    `Trusted issuer${trust.length > 1 ? 's' : ''}: ${trust.map(a => a.issuerAddress).join(', ')}` +
+      (opts.issuerAddress ? '' : ' (built-in default: hosted service)'),
+  );
   const result = await verifyBundle(bundle, pdfBuffer, { trust, indexerUrl: opts.indexer });
 
   for (const step of result.steps) {
