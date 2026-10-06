@@ -399,10 +399,12 @@ Single-page app: upload PDF + bundle → verify client-side → step-by-step res
 - [x] `pqva/2` bundles: RFC 6962-style Merkle tree, `issuerAddress`, `signerSource`
 - [x] Caller-supplied signers labelled `requester-asserted`; webhook signers `docusign-connect`
 - [x] Production fails closed without `PORTAL_API_KEY` / `X402_TREASURY_ADDRESS`; trust proxy; rate limits
-- [x] Payment replay guard on `/api/anchor`
+- [x] Moved hosting from Railway to Vercel: single Express function, private Vercel Blob storage, durable replay/webhook claims, `waitUntil` for webhook processing
+- [x] Payment replay guard on `/api/anchor` (durable, cross-instance)
 - [x] Compliance docs corrected to match the implementation
 - [ ] Rotate the leaked payer wallet (`2FBKPEID…`) and purge it from git history
 - [ ] Settle x402 payment before anchoring (library currently settles after the handler)
 - [ ] Verify Falcon-512 state proofs + light-block-header proofs so the indexer need not be trusted
 - [ ] Hold the ML-DSA key in an HSM/KMS
+- [ ] Global rate limiting on Vercel (Firewall rule or shared store); in-app limits are per instance
 - [ ] Regenerate `package-lock.json` (out of sync), drop the unused `merkletreejs` dependency, move `typescript` / `@types/*` to devDependencies

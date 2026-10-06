@@ -3,7 +3,9 @@ import { createHmac, timingSafeEqual } from 'crypto';
 import { hashDocument } from './documentHasher.js';
 import { createProofBundle } from './proofBundleAssembler.js';
 import { downloadEnvelopePdf, getSignerMetadata } from './docusignClient.js';
-import { findRecordByEnvelopeId, saveRecord, ArchiveRecord } from './archiveStore.js';
+import { waitUntil } from '@vercel/functions';
+import { saveRecord, webhookRecordId, ArchiveRecord } from './archiveStore.js';
+import { getStorage } from './storage.js';
 import { isProduction } from './config.js';
 import type { Signer } from './bundleSigner.js';
 
@@ -61,10 +63,10 @@ function testPdfAllowed(): boolean {
   return process.env.DOCUSIGN_ALLOW_TEST_PDF === 'true' && !isProduction();
 }
 
-// Envelopes currently being processed — together with the archive lookup this
-// makes the webhook idempotent, so DocuSign retries and replayed requests do
-// not anchor the same envelope twice.
-const inFlight = new Set<string>();
+// One durable claim per envelope makes the webhook idempotent across instances:
+// DocuSign retries and replayed requests never anchor the same envelope twice.
+// The claim is released if processing fails so a later retry can succeed.
+const claimKey = (envelopeId: string) => `webhooks/${envelopeId}`;
 
 async function processEnvelope(envelopeId: string, testPdfBase64?: string): Promise<void> {
   let pdfBuffer: Buffer;
@@ -88,7 +90,7 @@ async function processEnvelope(envelopeId: string, testPdfBase64?: string): Prom
   });
 
   const record: ArchiveRecord = {
-    id: `ds-${envelopeId}`,
+    id: webhookRecordId(envelopeId),
     envelopeId,
     title: `docusign-${envelopeId}`,
     filename: `${envelopeId}.pdf`,
@@ -106,7 +108,7 @@ async function processEnvelope(envelopeId: string, testPdfBase64?: string): Prom
 
 export const webhookRouter = Router();
 
-webhookRouter.post('/docusign', (req: Request, res: Response): void => {
+webhookRouter.post('/docusign', async (req: Request, res: Response): Promise<void> => {
   const rawBody = req.body as Buffer;
 
   if (!Buffer.isBuffer(rawBody) || !validateSignature(req, rawBody)) {
@@ -133,18 +135,28 @@ webhookRouter.post('/docusign', (req: Request, res: Response): void => {
     return;
   }
 
-  if (inFlight.has(envelopeId) || findRecordByEnvelopeId(envelopeId)) {
+  let fresh: boolean;
+  try {
+    fresh = await getStorage().claim(claimKey(envelopeId));
+  } catch (e) {
+    process.stderr.write(`[webhook] claim store unavailable: ${(e as Error).message}\n`);
+    // 503 makes DocuSign retry later.
+    res.status(503).json({ error: 'temporarily unavailable' });
+    return;
+  }
+  if (!fresh) {
     res.status(200).json({ received: true, envelopeId, duplicate: true });
     return;
   }
 
   // Respond before anchoring so DocuSign does not retry on slow confirmation.
+  // waitUntil keeps the serverless function alive until processing finishes.
   res.status(200).json({ received: true, envelopeId });
 
-  inFlight.add(envelopeId);
-  processEnvelope(envelopeId, body.testPdfBase64)
-    .catch(e => {
+  waitUntil(
+    processEnvelope(envelopeId, body.testPdfBase64).catch(async e => {
       process.stderr.write(`[webhook] failed to process envelope ${envelopeId}: ${(e as Error).message}\n`);
-    })
-    .finally(() => inFlight.delete(envelopeId));
+      await getStorage().release(claimKey(envelopeId)).catch(() => undefined);
+    }),
+  );
 });

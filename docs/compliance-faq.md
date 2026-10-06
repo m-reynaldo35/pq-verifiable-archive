@@ -39,7 +39,7 @@ the Regulation.
 ### What data is in the proof bundle, and where does it live?
 
 The bundle is a JSON file returned to whoever requested the anchor and, for the
-archive and webhook paths, stored by the operator under `PQVA_ARCHIVE_DIR`. It is not
+archive and webhook paths, stored by the operator in a private Vercel Blob store. It is not
 published on-chain. It contains:
 
 - the document's SHA-256 hash,
@@ -49,8 +49,9 @@ published on-chain. It contains:
 - an optional signer list (name, email, signed-at) with a `signerSource`,
 - the issuer's ML-DSA-65 public key and signature over all of the above.
 
-The archive also stores the uploaded **PDF itself** (`archive/pdfs/`), so the
-operator's normal retention, access-control and erasure policies apply to it.
+The archive also stores the uploaded **PDF itself** (private Vercel Blob store,
+served only through the API-key-protected endpoints), so the operator's normal
+retention, access-control and erasure policies apply to it.
 
 ### What does the signer list prove?
 

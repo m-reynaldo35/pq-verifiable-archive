@@ -34,14 +34,14 @@ All four entry points call `createProofBundle()` in `src/proofBundleAssembler.ts
         │
         ▼
  bundle returned to caller; archive and webhook paths also store the bundle and PDF
- under PQVA_ARCHIVE_DIR (src/archiveStore.ts)
+ in Vercel Blob, or PQVA_ARCHIVE_DIR locally (src/archiveStore.ts, src/storage.ts)
 ```
 
 Every call anchors one document in its own transaction. The Merkle structure is kept
 so batching can be added later without a format change; there is no batching today.
 
-The uploaded or downloaded PDF **is written to disk** by the archive and webhook
-paths. `/api/anchor` and the MCP tool only ever see the hash.
+The uploaded or downloaded PDF **is stored** (private Vercel Blob store in
+production, a local directory otherwise) by the archive and webhook paths. `/api/anchor` and the MCP tool only ever see the hash.
 
 ---
 
@@ -116,16 +116,24 @@ itself is served by the hosted server, so it is not independent of that server.
 
 ---
 
-## Deployment notes
+## Deployment (Vercel)
 
-- Set `NODE_ENV=production`. The server then refuses to start without
-  `PORTAL_API_KEY`, `X402_TREASURY_ADDRESS` and a consistent ML-DSA key pair.
-- Set `TRUST_PROXY_HOPS` to the number of proxies in front of the server (1 on
-  Railway; this is the default when `RAILWAY_ENVIRONMENT_NAME` is set) so rate limits
-  apply per client.
-- Mount a persistent volume and set `PQVA_ARCHIVE_DIR`, or archived files are lost on
-  redeploy.
-- The x402 middleware settles payment after the handler runs. A replay guard rejects
-  reuse of a payment header within a process, but a payment that ultimately fails to
-  settle still produces one anchor. Settling before anchoring would close this
-  completely.
+- `api/index.ts` exports the Express app as a single Vercel function;
+  `vercel.json` rewrites every non-static path to it and serves `public/` from
+  the CDN with the security headers. `src/server.ts` is the long-running entry
+  point for local development (`npm run dev`).
+- Connect a **private** Vercel Blob store. It holds archive records, bundles and
+  PDFs, plus one-time claims for x402 payment headers and DocuSign envelopes, so
+  replay protection and webhook idempotency hold across function instances.
+- `NODE_ENV` is `production` on Vercel. If `PORTAL_API_KEY`,
+  `X402_TREASURY_ADDRESS`, the ML-DSA keys or the Blob store are missing, every
+  request returns 503 and the reason is logged.
+- Webhook processing continues after the 200 response via `waitUntil`
+  (function `maxDuration` 60 s).
+- Rate limits are in-memory per function instance, so they are best-effort on
+  Vercel. Add a Vercel Firewall rate-limit rule for `/api/anchor` and
+  `/api/verify` for a global limit.
+- The x402 middleware settles payment after the handler runs. The durable replay
+  guard stops a payment header being used twice, but a payment that ultimately
+  fails to settle still produces one anchor. Settling before anchoring would
+  close this completely.

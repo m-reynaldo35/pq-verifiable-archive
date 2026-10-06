@@ -1,4 +1,4 @@
-// Start server first: npm start
+// Start the local server first: npm run dev
 //
 // Simulates a DocuSign Connect 2.0 webhook end-to-end without a real DocuSign
 // account. Requires DOCUSIGN_ALLOW_TEST_PDF=true on the running (non-production)
@@ -55,9 +55,11 @@ async function main() {
   if (res.status !== 200) throw new Error(`webhook returned ${res.status}: ${await res.text()}`);
   console.log('Webhook accepted (200). Waiting for bundle + on-chain anchor...');
 
+  // Local run: the server stores in PQVA_ARCHIVE_DIR (no Blob credentials).
   const archiveDir = path.resolve(process.env.PQVA_ARCHIVE_DIR ?? 'archive');
-  const bundlePath = path.join(archiveDir, 'bundles', `ds-${envelopeId}.json`);
-  const pdfPath = path.join(archiveDir, 'pdfs', `ds-${envelopeId}.pdf`);
+  const id = `ds-${envelopeId.toLowerCase()}`;
+  const bundlePath = path.join(archiveDir, 'bundles', `${id}.json`);
+  const pdfPath = path.join(archiveDir, 'pdfs', `${id}.pdf`);
   const deadline = Date.now() + POLL_TIMEOUT_MS;
   while (!(await fileExists(bundlePath))) {
     if (Date.now() > deadline) throw new Error(`bundle ${bundlePath} did not appear within ${POLL_TIMEOUT_MS}ms`);

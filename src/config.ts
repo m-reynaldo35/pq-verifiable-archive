@@ -42,7 +42,7 @@ export interface TrustAnchor {
 }
 
 // The issuer behind the hosted service at
-// pq-verifiable-archive-production.up.railway.app. Values were read from
+// pq-verifiable-archive.vercel.app. Values were read from
 // Algorand mainnet: txn BUVB… (round 62052238) was sent by JJNDY3… with note
 // {"op":"key-register","pkHash":"sha256:10dcea3c…"}.
 // This is an explicit default for the hosted service only. Self-hosters must

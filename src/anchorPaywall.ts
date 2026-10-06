@@ -4,41 +4,36 @@ import { paymentMiddleware, x402ResourceServer } from '@x402-avm/express';
 import { HTTPFacilitatorClient } from '@x402-avm/core/server';
 import { ExactAvmScheme } from '@x402-avm/avm/exact/server';
 import { ALGORAND_MAINNET_CAIP2 } from '@x402-avm/avm';
+import { getStorage } from './storage.js';
 
 // Default matches the SDK's own default — only override via env for a self-hosted facilitator.
 const FACILITATOR_URL = process.env.X402_FACILITATOR_URL ?? 'https://facilitator.goplausible.xyz';
 
-// Algorand txns are valid for at most 1000 rounds (~1 hour), so a payment
-// header older than this can no longer settle and need not be remembered.
-const USED_PAYMENT_TTL_MS = 2 * 60 * 60 * 1000;
-
 // The x402 middleware verifies a payment, runs the route handler, and only then
 // settles. Our handler anchors on mainnet and signs a bundle before settlement,
 // so the same payment header sent N times concurrently would pass the stateless
-// verify N times. This guard admits each payment header once: concurrent or
-// later reuse is rejected with 409 before the paywall or handler runs.
+// verify N times. This guard admits each payment header once, across all
+// instances (the claim is stored durably — Vercel Blob in production). Reuse is
+// rejected with 409 before the paywall or handler runs; if the claim store is
+// unavailable the request is refused (fail closed).
 export function paymentReplayGuard(): RequestHandler {
-  const seen = new Map<string, number>();
-
   return (req: Request, res: Response, next: NextFunction): void => {
     const header = req.header('payment-signature') ?? req.header('x-payment');
     if (!header) {
       next();
       return;
     }
-
-    const now = Date.now();
-    for (const [key, at] of seen) {
-      if (now - at > USED_PAYMENT_TTL_MS) seen.delete(key);
-    }
-
-    const key = createHash('sha256').update(header).digest('hex');
-    if (seen.has(key)) {
-      res.status(409).json({ error: 'payment already used — sign a new payment for each anchor' });
-      return;
-    }
-    seen.set(key, now);
-    next();
+    const key = `payments/${createHash('sha256').update(header).digest('hex')}`;
+    getStorage()
+      .claim(key)
+      .then(fresh => {
+        if (fresh) next();
+        else res.status(409).json({ error: 'payment already used — sign a new payment for each anchor' });
+      })
+      .catch(e => {
+        console.error(`payment replay guard unavailable: ${(e as Error).message}`);
+        res.status(503).json({ error: 'payment processing temporarily unavailable' });
+      });
   };
 }
 

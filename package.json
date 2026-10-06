@@ -28,7 +28,8 @@
     "mcp": "tsx src/mcp-server.ts",
     "e2e": "tsx scripts/e2e-test.ts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test test/*.test.ts"
+    "test": "tsx --test test/*.test.ts",
+    "dev": "tsx src/server.ts"
   },
   "repository": {
     "type": "git",
@@ -60,6 +61,8 @@
     "@noble/post-quantum": "^0.6.1",
     "@types/multer": "^2.1.0",
     "@types/pdfkit": "^0.17.6",
+    "@vercel/blob": "^2.8.1",
+    "@vercel/functions": "^3.9.11",
     "@x402-avm/avm": "^2.6.1",
     "@x402-avm/core": "^2.6.1",
     "@x402-avm/express": "^2.6.1",
@@ -80,5 +83,8 @@
   "devDependencies": {
     "@types/express": "^5.0.6",
     "@types/node": "^25.9.3"
+  },
+  "engines": {
+    "node": "22.x"
   }
 }

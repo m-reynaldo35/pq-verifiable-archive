@@ -41,7 +41,7 @@
     }
   },
   "hostedApi": {
-    "url": "https://pq-verifiable-archive-production.up.railway.app",
+    "url": "https://pq-verifiable-archive.vercel.app",
     "payment": "x402 \u2014 $0.01 USDC per anchor on Algorand mainnet",
     "verifyEndpoint": "POST /api/verify (always free)"
   }

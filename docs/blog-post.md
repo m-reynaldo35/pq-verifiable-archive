@@ -108,7 +108,7 @@ An agent executing a contract can anchor the signed hash immediately after execu
 
 ## Pay per anchor via x402 on the hosted API
 
-If you don't want to run your own node, the hosted API at `pq-verifiable-archive-production.up.railway.app` charges **$0.01 USDC per anchor** using the x402 micropayment protocol on Algorand.
+If you don't want to run your own node, the hosted API at `pq-verifiable-archive.vercel.app` charges **$0.01 USDC per anchor** using the x402 micropayment protocol on Algorand.
 
 The flow is entirely automated:
 

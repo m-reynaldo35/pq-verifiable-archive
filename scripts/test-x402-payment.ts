@@ -10,7 +10,7 @@ import { toClientAvmSigner, ExactAvmScheme, ALGORAND_MAINNET_CAIP2 } from '@x402
 import { x402Client } from '@x402-avm/core/client';
 import { encodePaymentSignatureHeader, decodePaymentRequiredHeader } from '@x402-avm/core/http';
 
-const API_URL = process.env.PQVA_API_URL ?? 'https://pq-verifiable-archive-production.up.railway.app';
+const API_URL = process.env.PQVA_API_URL ?? 'https://pq-verifiable-archive.vercel.app';
 
 // Payer wallet mnemonic — must come from the environment. Never commit one.
 const PAYER_MNEMONIC = process.env.ALGO_SIGNER_MNEMONIC;

@@ -13,7 +13,7 @@
   },
   "servers": [
     {
-      "url": "https://pq-verifiable-archive-production.up.railway.app",
+      "url": "https://pq-verifiable-archive.vercel.app",
       "description": "Hosted API (pay-per-anchor)"
     }
   ],

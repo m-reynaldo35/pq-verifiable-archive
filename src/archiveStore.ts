@@ -1,6 +1,7 @@
-import { mkdir, readFile, writeFile, rename, copyFile, access } from 'fs/promises';
+import { readFile } from 'fs/promises';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
+import { getStorage } from './storage.js';
 import type { ProofBundle, Signer, SignerSource } from './bundleSigner.js';
 
 export interface ArchiveRecord {
@@ -19,122 +20,97 @@ export interface ArchiveRecord {
   archivedAt: string;
 }
 
-// Set PQVA_ARCHIVE_DIR to a mounted persistent volume in production. The
-// container filesystem on Railway (and most PaaS hosts) is wiped on redeploy.
-const ARCHIVE_DIR = path.resolve(process.env.PQVA_ARCHIVE_DIR ?? 'archive');
-const BUNDLES_DIR = path.join(ARCHIVE_DIR, 'bundles');
-const PDFS_DIR = path.join(ARCHIVE_DIR, 'pdfs');
-const INDEX_PATH = path.join(ARCHIVE_DIR, 'index.json');
+// Storage layout (Vercel Blob or PQVA_ARCHIVE_DIR):
+//   records/<id>.json   archive record
+//   bundles/<id>.json   proof bundle
+//   pdfs/<id>.pdf       archived document
+const recordKey = (id: string) => `records/${id}.json`;
+const bundleKey = (id: string) => `bundles/${id}.json`;
+const pdfKey = (id: string) => `pdfs/${id}.pdf`;
 
-const SEED_BUNDLE_SRC = path.resolve('bundles/sample-contract-bundle.json');
-const SEED_PDF_SRC = path.resolve('assets/sample-contract.pdf');
-const SEED_ID = 'sample-contract';
+const MAX_LISTED_RECORDS = 500;
+const ID_RE = /^[a-z0-9-]{1,80}$/;
 
-let records: ArchiveRecord[] = [];
+// The demo sample ships with the code (read-only) instead of being copied into
+// storage, so it is always present and never needs seeding.
+const SAMPLE_ID = 'sample-contract';
+const SAMPLE_BUNDLE_PATH = path.resolve('bundles/sample-contract-bundle.json');
+const SAMPLE_PDF_PATH = path.resolve('assets/sample-contract.pdf');
 
-// Serialises writes so concurrent saves cannot interleave index updates.
-let writeChain: Promise<unknown> = Promise.resolve();
-function withWriteLock<T>(fn: () => Promise<T>): Promise<T> {
-  const run = writeChain.then(fn, fn);
-  writeChain = run.catch(() => undefined);
-  return run;
-}
-
-async function exists(p: string): Promise<boolean> {
+async function sampleRecord(): Promise<ArchiveRecord | undefined> {
+  let bundle: ProofBundle;
   try {
-    await access(p);
-    return true;
+    bundle = JSON.parse(await readFile(SAMPLE_BUNDLE_PATH, 'utf8')) as ProofBundle;
   } catch {
-    return false;
+    return undefined;
   }
-}
-
-async function writeFileAtomic(target: string, data: string | Buffer): Promise<void> {
-  const tmp = `${target}.${randomUUID()}.tmp`;
-  await writeFile(tmp, data);
-  await rename(tmp, target);
-}
-
-function writeIndex(): Promise<void> {
-  return writeFileAtomic(INDEX_PATH, JSON.stringify(records, null, 2));
-}
-
-async function seedSample(): Promise<void> {
-  if (!(await exists(SEED_BUNDLE_SRC)) || !(await exists(SEED_PDF_SRC))) {
-    process.stderr.write('warn: sample contract bundle or pdf missing — archive seeded empty\n');
-    return;
-  }
-  const bundle = JSON.parse(await readFile(SEED_BUNDLE_SRC, 'utf8')) as ProofBundle;
-
-  await copyFile(SEED_BUNDLE_SRC, getBundlePath(SEED_ID));
-  await copyFile(SEED_PDF_SRC, getPdfPath(SEED_ID));
-
-  records = [
-    {
-      id: SEED_ID,
-      envelopeId: bundle.envelopeId,
-      title: 'sample-contract',
-      filename: 'sample-contract.pdf',
-      documentHash: bundle.documentHash,
-      signers: bundle.protocol === 'pqva/2' ? bundle.signers : bundle.docusignSigners ?? [],
-      signerSource: bundle.protocol === 'pqva/2' ? bundle.signerSource : 'requester-asserted',
-      txId: bundle.algorandTxnId,
-      round: bundle.algorandRound,
-      blockTimestamp: bundle.blockTimestamp,
-      stateProofRound: bundle.stateProofRound,
-      archivedAt: bundle.blockTimestamp ?? new Date().toISOString(),
-    },
-  ];
-  await writeIndex();
-}
-
-export async function initArchive(): Promise<void> {
-  if (!process.env.PQVA_ARCHIVE_DIR && process.env.RAILWAY_ENVIRONMENT_NAME) {
-    process.stderr.write(
-      'warn: PQVA_ARCHIVE_DIR not set — archive is on ephemeral disk and will be lost on redeploy; mount a volume\n',
-    );
-  }
-  await mkdir(BUNDLES_DIR, { recursive: true });
-  await mkdir(PDFS_DIR, { recursive: true });
-
-  if (await exists(INDEX_PATH)) {
-    records = JSON.parse(await readFile(INDEX_PATH, 'utf8')) as ArchiveRecord[];
-    if (records.length === 0) await seedSample();
-    return;
-  }
-  await seedSample();
+  return {
+    id: SAMPLE_ID,
+    envelopeId: bundle.envelopeId,
+    title: 'sample-contract',
+    filename: 'sample-contract.pdf',
+    documentHash: bundle.documentHash,
+    signers: bundle.protocol === 'pqva/2' ? bundle.signers : bundle.docusignSigners ?? [],
+    signerSource: bundle.protocol === 'pqva/2' ? bundle.signerSource : 'requester-asserted',
+    txId: bundle.algorandTxnId,
+    round: bundle.algorandRound,
+    blockTimestamp: bundle.blockTimestamp,
+    stateProofRound: bundle.stateProofRound,
+    archivedAt: bundle.blockTimestamp ?? '1970-01-01T00:00:00.000Z',
+  };
 }
 
 export function newRecordId(slug: string): string {
   return `doc-${randomUUID().slice(0, 12)}-${slug}`;
 }
 
-export function listRecords(): ArchiveRecord[] {
-  return [...records].sort((a, b) => b.archivedAt.localeCompare(a.archivedAt));
+export function webhookRecordId(envelopeId: string): string {
+  return `ds-${envelopeId.toLowerCase().replace(/[^a-z0-9-]/g, '-')}`.slice(0, 80);
 }
 
-export function getRecord(id: string): ArchiveRecord | undefined {
-  return records.find(r => r.id === id);
+export async function listRecords(): Promise<ArchiveRecord[]> {
+  const storage = getStorage();
+  const keys = await storage.list('records/', MAX_LISTED_RECORDS);
+  const records = (
+    await Promise.all(
+      keys.map(async k => {
+        const raw = await storage.get(k);
+        return raw ? (JSON.parse(raw.toString('utf8')) as ArchiveRecord) : undefined;
+      }),
+    )
+  ).filter((r): r is ArchiveRecord => Boolean(r));
+  const sample = await sampleRecord();
+  if (sample) records.push(sample);
+  return records.sort((a, b) => b.archivedAt.localeCompare(a.archivedAt));
 }
 
-export function findRecordByEnvelopeId(envelopeId: string): ArchiveRecord | undefined {
-  return records.find(r => r.envelopeId === envelopeId);
+export async function getRecord(id: string): Promise<ArchiveRecord | undefined> {
+  if (id === SAMPLE_ID) return sampleRecord();
+  if (!ID_RE.test(id)) return undefined;
+  const raw = await getStorage().get(recordKey(id));
+  return raw ? (JSON.parse(raw.toString('utf8')) as ArchiveRecord) : undefined;
 }
 
-export function getBundlePath(id: string): string {
-  return path.join(BUNDLES_DIR, `${id}.json`);
+export async function readBundle(id: string): Promise<Buffer | null> {
+  if (id === SAMPLE_ID) return readFile(SAMPLE_BUNDLE_PATH);
+  return getStorage().get(bundleKey(id));
 }
 
-export function getPdfPath(id: string): string {
-  return path.join(PDFS_DIR, `${id}.pdf`);
+export async function readPdf(id: string): Promise<Buffer | null> {
+  if (id === SAMPLE_ID) return readFile(SAMPLE_PDF_PATH);
+  return getStorage().get(pdfKey(id));
 }
 
-export function saveRecord(record: ArchiveRecord, bundleJson: string, pdfBuffer: Buffer): Promise<void> {
-  return withWriteLock(async () => {
-    if (records.some(r => r.id === record.id)) throw new Error(`archive record ${record.id} already exists`);
-    await writeFileAtomic(getBundlePath(record.id), bundleJson);
-    await writeFileAtomic(getPdfPath(record.id), pdfBuffer);
-    records = [...records, record];
-    await writeIndex();
-  });
+// The record is written last, so a record is only listed once its bundle and
+// PDF are in place.
+export async function saveRecord(record: ArchiveRecord, bundleJson: string, pdfBuffer: Buffer): Promise<void> {
+  if (!ID_RE.test(record.id)) throw new Error(`invalid archive record id: ${record.id}`);
+  const storage = getStorage();
+  await storage.put(bundleKey(record.id), bundleJson, 'application/json');
+  await storage.put(pdfKey(record.id), pdfBuffer, 'application/pdf');
+  await storage.put(recordKey(record.id), JSON.stringify(record, null, 2), 'application/json');
+}
+
+export function storageKind(): string {
+  return getStorage().kind;
 }

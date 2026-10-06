@@ -58,12 +58,12 @@ If you don't want to run your own node, call the hosted REST endpoint:
 
 ```bash
 # Without payment — returns 402 with payment instructions
-curl -X POST https://pq-verifiable-archive-production.up.railway.app/api/anchor \
+curl -X POST https://pq-verifiable-archive.vercel.app/api/anchor \
   -H "Content-Type: application/json" \
   -d '{"hash":"<sha256 hex>","envelope_id":"contract-001"}'
 
 # With x402 payment ($0.01 USDC on Algorand)
-curl -X POST https://pq-verifiable-archive-production.up.railway.app/api/anchor \
+curl -X POST https://pq-verifiable-archive.vercel.app/api/anchor \
   -H "Content-Type: application/json" \
   -H "payment-signature: <x402 payment header>" \
   -d '{"hash":"<sha256 hex>","envelope_id":"contract-001"}'
@@ -71,7 +71,7 @@ curl -X POST https://pq-verifiable-archive-production.up.railway.app/api/anchor 
 
 Price: **$0.01 per anchor.** Verification is always free.
 
-**OpenAPI spec:** [`/openapi.json`](https://pq-verifiable-archive-production.up.railway.app/openapi.json) — machine-readable for LLMs, tools, and code generators.
+**OpenAPI spec:** [`/openapi.json`](https://pq-verifiable-archive.vercel.app/openapi.json) — machine-readable for LLMs, tools, and code generators.
 
 ## Self-hosted quick start
 
@@ -82,7 +82,7 @@ npm install
 cp .env.example .env   # fill in ALGORAND_MNEMONIC + ML-DSA keys
 npm run generate-wallet   # or use existing wallet
 npm run register-key      # registers your ML-DSA-65 key on Algorand
-npm start                 # HTTP server on :3000
+npm run dev               # HTTP server on :3000
 npm run mcp               # MCP server (stdio) for AI agents
 ```
 
@@ -98,13 +98,24 @@ Required env vars (see `.env.example`): `ALGORAND_MNEMONIC`, `PQVA_MLDSA_PUBLIC_
 still work but are deprecated).
 
 With `NODE_ENV=production` the server also requires `PORTAL_API_KEY` (operator
-archive UI and `/api/documents`) and `X402_TREASURY_ADDRESS` (pay-per-anchor), and
-refuses to start without them. Mount a volume and set `PQVA_ARCHIVE_DIR` so the
-archive survives redeploys.
+archive UI and `/api/documents`) and `X402_TREASURY_ADDRESS` (pay-per-anchor); without
+them every request returns 503. Locally the archive is stored in `PQVA_ARCHIVE_DIR`
+(default `./archive`).
 
 Verifying your own bundles: pass your issuer to the verifier, e.g.
 `npm run verify -- --bundle b.json --pdf doc.pdf --issuer-address <addr> --key-reg-txn <txid> --pk-sha256 <hex>`
 (`npm run register-key` prints these values).
+
+## Deploy to Vercel
+
+The app runs on Vercel as one serverless function (`api/index.ts`) with `public/` served from the CDN (see `vercel.json`).
+
+1. Import the repository as a Vercel project (framework preset: Other; no build command needed).
+2. **Storage:** create a **private** Blob store and connect it to the project (this sets `BLOB_READ_WRITE_TOKEN`). It stores archived PDFs and bundles plus the payment-replay and webhook claims.
+3. **Environment variables** (Production): `ALGORAND_MNEMONIC`, `PQVA_MLDSA_PUBLIC_KEY`, `PQVA_MLDSA_PRIVATE_KEY`, `PQVA_KEY_REGISTRATION_TXN_ID`, `PORTAL_API_KEY`, `X402_TREASURY_ADDRESS`, and for DocuSign `DOCUSIGN_HMAC_KEY` plus the `DOCUSIGN_*` API credentials. Mark the secrets as Sensitive.
+4. Optional: add a Vercel Firewall rate-limit rule for `/api/anchor` and `/api/verify`. The in-app limits apply per function instance only.
+
+If anything required is missing in production, every request returns 503 and the reason appears in the function logs.
 
 ## How verification works
 
