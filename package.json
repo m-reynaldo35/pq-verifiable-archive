@@ -15,7 +15,7 @@
     "bundles/sample-contract-bundle.json"
   ],
   "bin": {
-    "pq-verifiable-archive": "bin/pq-verifiable-archive.js"
+    "pq-verifiable-archive": "bin/pq-verifiable-archive.cjs"
   },
   "scripts": {
     "generate-wallet": "tsx scripts/generate-wallet.ts",
@@ -51,7 +51,7 @@
   ],
   "author": "Mark Reynolds",
   "license": "MIT",
-  "type": "commonjs",
+  "type": "module",
   "bugs": {
     "url": "https://github.com/m-reynaldo35/pq-verifiable-archive/issues"
   },
