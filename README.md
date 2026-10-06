@@ -6,6 +6,14 @@ Works with any signing tool: DocuSign, HelloSign, Adobe Sign, or a plain PDF. Yo
 
 **Live on Algorand mainnet.** Real transactions, real ML-DSA-65 signatures, working open-source verifier.
 
+## Try it in 2 minutes
+
+1. Open **https://pq-verifiable-archive.vercel.app** → **Verify Independently** → **Load sample bundle & PDF**, then **Verify**. Everything runs in your browser against the public Algorand indexer; the PDF is never uploaded.
+2. Change one character of the demo PDF (or use any other PDF) with the same bundle: the result flips to **INVALID** on the document-hash check.
+3. Prefer a terminal? `git clone` this repo, `npm install`, then `npm run verify -- --bundle bundles/sample-contract-bundle.json --pdf assets/sample-contract.pdf`.
+
+Anchoring a new document costs $0.01 USDC via x402 (`POST /api/anchor`, see below). Verifying is always free.
+
 ## Why this exists
 
 Today's e-signature platforms use RSA or ECDSA. Both are broken by a large-enough quantum computer. NIST finalized ML-DSA (FIPS-204) in 2024 and CNSA 2.0 mandates PQC migration in federal procurement by ~2030–2035. Documents signed today need to be verifiable in 2040.
@@ -142,26 +150,28 @@ The verifier (`npm run verify`) exits `0` = VALID, `1` = INVALID, `2` = could no
 ```json
 {
   "protocol": "pqva/2",
-  "envelopeId": "contract-2026-001",
-  "documentHash": "0569e7cb...",
-  "batchId": "QIS2LWKE...",
-  "merkleRoot": "5d2c81f0...",
+  "envelopeId": "launch-test-contract-001",
+  "documentHash": "7ad4c3341e5c37b4bdc1001abbb3b99ecbb3ea42deca98ea7e6b7366805be991",
+  "batchId": "5V47FZ65L4AO2UWOSEP73GGKGFYOQ672URVRE5F6GPGL3M7G6EHA",
+  "merkleRoot": "170c1f67b7709e58...",
   "merkleProof": [],
-  "algorandTxnId": "QIS2LWKE...",
-  "algorandRound": 62052659,
-  "blockTimestamp": "2026-06-11T13:50:11.000Z",
-  "stateProofRound": 62052864,
-  "issuerAddress": "JJNDY3TL...",
-  "keyRegistrationTxnId": "BUVBKZAY...",
-  "signers": [
-    { "name": "Jordan Avery", "email": "jordan@acme.example", "signedAt": "2026-06-11T13:48:02.000Z" }
-  ],
+  "algorandTxnId": "5V47FZ65L4AO2UWOSEP73GGKGFYOQ672URVRE5F6GPGL3M7G6EHA",
+  "algorandRound": 65727529,
+  "blockTimestamp": "2026-10-06T13:41:09.000Z",
+  "stateProofRound": 65727744,
+  "issuerAddress": "XCJOXAMHVPXGFJHHKF3CUSVD7CD44Z4FB3BFXZYH46HYX6NUQ7TANSWAMM",
+  "keyRegistrationTxnId": "S7NGS2LDQXB73R4XSSOS6VRCS66ZL3I5S7FQWXHB4YIXLDISLZ7Q",
+  "signers": [],
   "signerSource": "requester-asserted",
   "algorithm": "ml-dsa-65",
   "mldsaPublicKey": "...",
-  "signature": "75483d62..."
+  "signature": "..."
 }
 ```
+
+This is a real bundle from a paid mainnet anchor ([explorer](https://explorer.perawallet.app/tx/5V47FZ65L4AO2UWOSEP73GGKGFYOQ672URVRE5F6GPGL3M7G6EHA)).
+
+**Hosted issuers** (pinned in every verifier): `XCJOXAMH…` (current, key registration `S7NGS2LD…`) and `JJNDY3TL…` (original, key registration `BUVBKZAY…`).
 
 Full schema: [`docs/architecture.md`](docs/architecture.md)
 
