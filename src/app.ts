@@ -126,7 +126,11 @@ const verifyLimiter = limiter(20, 'too many verify requests — try again in a m
 const archiveLimiter = limiter(10, 'too many archive requests — try again in a minute');
 const anchorLimiter = limiter(10, 'too many anchor requests — try again in a minute');
 
-const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 25 * 1024 * 1024 } });
+// Vercel rejects function request bodies over 4.5 MB before they reach the
+// app, so the server-side upload limit sits just under that. Larger documents
+// can still be checked with the in-browser verifier, which never uploads them.
+const MAX_UPLOAD_BYTES = 4 * 1024 * 1024;
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: MAX_UPLOAD_BYTES } });
 
 app.use('/webhook/docusign', express.raw({ type: 'application/json', limit: '1mb' }));
 app.use('/webhook', webhookRouter);
@@ -375,7 +379,10 @@ app.post('/api/anchor', express.json({ limit: '64kb' }), async (req, res) => {
 
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   if (err instanceof multer.MulterError) {
-    const message = err.code === 'LIMIT_FILE_SIZE' ? 'file too large (max 25 MB)' : 'invalid upload';
+    const message =
+      err.code === 'LIMIT_FILE_SIZE'
+        ? 'file too large for server upload (max 4 MB) — use the in-browser verifier or the CLI for larger documents'
+        : 'invalid upload';
     res.status(400).json({ valid: false, steps: [], signers: [], error: message });
     return;
   }
