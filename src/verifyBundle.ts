@@ -1,304 +1,358 @@
-import algosdk from 'algosdk';
 import { createHash } from 'crypto';
 import { hashDocument } from './documentHasher.js';
-import { verifyMerkleProof } from './merkleBatcher.js';
+import { verifyMerkleProof, verifyLegacyMerkleProof } from './merkleBatcher.js';
 import {
   verifyBundleSignature,
-  resolvePublicKeyBytes,
+  MLDSA65_PUBLIC_KEY_BYTES,
   ProofBundle,
-  DocuSignSigner,
+  Signer,
+  SignerSource,
 } from './bundleSigner.js';
-import { getStateProofForRound } from './stateProofCollector.js';
+import { envelopeIdsDigest } from './algorandAnchor.js';
+import { findStateProofForRound } from './stateProofCollector.js';
+import { DEFAULT_INDEXER_URL, TrustAnchor } from './config.js';
+import { parseHex, isHex32 } from './hex.js';
 
-const DEFAULT_INDEXER_URL = 'https://mainnet-idx.algonode.cloud';
+// Tolerated difference between the bundle's blockTimestamp and the on-chain
+// round time. New bundles copy the round time exactly; early pqva/1 bundles
+// were a few seconds off.
+const MAX_TIMESTAMP_DRIFT_SEC = 60;
 
-// Pinned out-of-band: the DocuSign ML-DSA-65 key registration txn.
-// Using a pinned value prevents a forger from substituting their own registered key.
-// Override via DOCUSIGN_KEY_REG_TXN_ID env var if the key is rotated.
-const PINNED_KEY_REG_TXN_ID =
-  process.env.DOCUSIGN_KEY_REG_TXN_ID ?? 'BUVBKZAYLHFLAX4WLD7KA7OQZAE4QYHGY3SHY3TVKVJFGQXP3IJA';
+export interface VerifyOptions {
+  // Who the verifier trusts to issue bundles. Never taken from the bundle.
+  trust: TrustAnchor;
+  indexerUrl?: string;
+  fetchImpl?: typeof fetch;
+}
 
 export interface VerifyStep {
   name: string;
   passed: boolean;
   detail: string;
   skipped?: boolean;
+  // Operational failure (network, missing config) — the check could not run.
   error?: boolean;
-  // Informational steps (e.g. the state proof) never block the overall `valid`
-  // verdict — they report coverage status only.
+  // Informational steps never affect `valid`.
   informational?: boolean;
 }
 
 export interface VerifyResult {
   valid: boolean;
   steps: VerifyStep[];
-  signers: DocuSignSigner[];
-  operationalError?: boolean;
+  // Signers listed in the bundle, with where they came from. 'requester-asserted'
+  // signers were typed by whoever requested the anchor and are not verified.
+  signers: Signer[];
+  signerSource: SignerSource;
+  // False when no document was supplied, so only the bundle was verified.
+  documentChecked: boolean;
+  // Anchoring time from the ledger (not from the bundle), when available.
+  anchoredAt?: string;
+  operationalError: boolean;
 }
 
-interface IndexerTransaction {
-  note?: Uint8Array;
-  roundTime?: number;
+interface IndexerTxn {
+  sender?: string;
+  'confirmed-round'?: number;
+  'round-time'?: number;
+  note?: string;
 }
 
-// Minimum fields a JSON object must carry to be treated as a pqva/1 bundle.
-function validateBundleSchema(bundle: ProofBundle): string[] {
-  const missing: string[] = [];
-  if ((bundle as { protocol?: unknown }).protocol !== 'pqva/1') missing.push('protocol (expected "pqva/1")');
-  if (!bundle.signature) missing.push('signature');
-  if (!bundle.algorandTxnId) missing.push('algorandTxnId');
-  if (!bundle.merkleRoot) missing.push('merkleRoot');
-  if (!bundle.documentHash) missing.push('documentHash');
-  if ((bundle as { algorithm?: unknown }).algorithm !== 'ml-dsa-65') missing.push('algorithm (expected "ml-dsa-65")');
-  return missing;
-}
-
-function getIndexer(): algosdk.Indexer {
-  const indexerUrl = process.env.ALGORAND_INDEXER_URL || DEFAULT_INDEXER_URL;
-  return new algosdk.Indexer('', indexerUrl, '');
-}
-
-async function fetchTransaction(txId: string): Promise<IndexerTransaction> {
-  const res = (await getIndexer().lookupTransactionByID(txId).do()) as {
-    transaction: IndexerTransaction;
-  };
-  if (!res.transaction) throw new Error(`transaction ${txId} not found`);
-  return res.transaction;
-}
+const STEP_SIGNATURE = 'ML-DSA-65 Signature';
+const STEP_DOCUMENT = 'Document Hash';
+const STEP_MERKLE = 'Merkle Inclusion';
+const STEP_ANCHOR = 'Algorand Anchor';
+const STEP_STATE_PROOF = 'State Proof (indexer-reported)';
 
 function sha256hex(data: Uint8Array): string {
   return createHash('sha256').update(Buffer.from(data)).digest('hex');
 }
 
-// Sub-check for step 1: confirm the public key used to verify the signature
-// (the one embedded in the bundle, or the env key for legacy bundles) matches
-// the pkHash recorded in the on-chain key registration transaction note. This
-// is what lets a verifier pin only the registration txn ID (or the Algorand
-// address) rather than the full key.
-// Returns: matched | mismatched | unavailable (network/parse failure).
-//
-// TRUST MODEL NOTE: `bundle.docusignKeyRegistrationTxnId` is currently read from
-// the bundle itself, which means a forger who controls the bundle could point it
-// at their own registration. For a PoC this is acceptable, but in production the
-// registration txn ID (or the registering Algorand address) MUST be pinned in
-// the verifier out-of-band and NOT trusted from the bundle. See the caller for
-// where this would be enforced.
-async function checkKeyRegistration(
+function isObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+// Structural checks so later steps never operate on undefined or wrongly typed
+// fields. Any problem makes the bundle INVALID (not an operational error).
+function validateBundleSchema(b: unknown): string[] {
+  if (!isObject(b)) return ['bundle is not a JSON object'];
+  const problems: string[] = [];
+  if (b.protocol !== 'pqva/1' && b.protocol !== 'pqva/2') problems.push('protocol (expected "pqva/2" or "pqva/1")');
+  if (b.algorithm !== 'ml-dsa-65') problems.push('algorithm (expected "ml-dsa-65")');
+  if (typeof b.signature !== 'string' || b.signature === '') problems.push('signature');
+  if (typeof b.algorandTxnId !== 'string' || !/^[A-Z2-7]{52}$/.test(b.algorandTxnId)) problems.push('algorandTxnId');
+  if (!Number.isSafeInteger(b.algorandRound) || (b.algorandRound as number) <= 0) problems.push('algorandRound');
+  if (!isHex32(b.merkleRoot)) problems.push('merkleRoot (64 lowercase hex)');
+  if (!isHex32(b.documentHash)) problems.push('documentHash (64 lowercase hex)');
+  if (typeof b.envelopeId !== 'string') problems.push('envelopeId');
+  if (!Array.isArray(b.merkleProof)) problems.push('merkleProof');
+  if (b.blockTimestamp !== undefined && (typeof b.blockTimestamp !== 'string' || Number.isNaN(Date.parse(b.blockTimestamp)))) {
+    problems.push('blockTimestamp');
+  }
+  if (b.protocol === 'pqva/2') {
+    if (typeof b.mldsaPublicKey !== 'string') problems.push('mldsaPublicKey');
+    if (typeof b.issuerAddress !== 'string') problems.push('issuerAddress');
+    if (typeof b.keyRegistrationTxnId !== 'string') problems.push('keyRegistrationTxnId');
+    if (!Array.isArray(b.signers)) problems.push('signers');
+    if (b.signerSource !== 'docusign-connect' && b.signerSource !== 'requester-asserted') problems.push('signerSource');
+  }
+  return problems;
+}
+
+function bundleSigners(b: ProofBundle): { signers: Signer[]; signerSource: SignerSource } {
+  if (b.protocol === 'pqva/2') return { signers: b.signers, signerSource: b.signerSource };
+  // pqva/1 signer lists were caller-supplied on every path except the webhook,
+  // and the bundle does not record which, so treat them as unverified.
+  return { signers: b.docusignSigners ?? [], signerSource: 'requester-asserted' };
+}
+
+type KeyCheck =
+  | { status: 'matched'; detail: string }
+  | { status: 'mismatched'; detail: string }
+  | { status: 'unavailable'; detail: string };
+
+class Indexer {
+  constructor(private readonly url: string, private readonly fetchImpl: typeof fetch) {}
+
+  async txn(txId: string): Promise<IndexerTxn> {
+    const res = await this.fetchImpl(`${this.url}/v2/transactions/${encodeURIComponent(txId)}`);
+    if (res.status === 404) throw new NotFoundError(`transaction ${txId} not found`);
+    if (!res.ok) throw new Error(`indexer ${res.status} ${res.statusText}`);
+    const body = (await res.json()) as { transaction?: IndexerTxn };
+    if (!body.transaction) throw new NotFoundError(`transaction ${txId} not found`);
+    return body.transaction;
+  }
+}
+
+class NotFoundError extends Error {}
+
+function decodeNote(txn: IndexerTxn): Record<string, unknown> | null {
+  if (typeof txn.note !== 'string') return null;
+  try {
+    const parsed = JSON.parse(Buffer.from(txn.note, 'base64').toString('utf8')) as unknown;
+    return isObject(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+// Confirm the signing key belongs to the trusted issuer. Fails closed: only
+// 'matched' lets Step 1 pass.
+async function checkKey(
+  publicKey: Uint8Array,
   bundle: ProofBundle,
-  // Uses pinned txn ID by default — forgers cannot substitute their own registered key.
-  registrationTxnId: string = PINNED_KEY_REG_TXN_ID ?? bundle.docusignKeyRegistrationTxnId,
-): Promise<'matched' | 'mismatched' | 'unavailable'> {
-  if (!registrationTxnId) return 'unavailable';
-  let note: string;
-  try {
-    const txn = await fetchTransaction(registrationTxnId);
-    if (!txn.note) return 'unavailable';
-    note = Buffer.from(txn.note).toString('utf8');
-  } catch {
-    return 'unavailable';
+  trust: TrustAnchor,
+  indexer: Indexer,
+): Promise<KeyCheck> {
+  const fingerprint = sha256hex(publicKey);
+  if (trust.pkSha256 && fingerprint === trust.pkSha256.toLowerCase()) {
+    return { status: 'matched', detail: 'key fingerprint matches the pinned issuer key (offline)' };
   }
-  let pkHash: unknown;
+
+  // Not the pinned key (or no fingerprint pinned): the issuer may have rotated
+  // keys. Accept a registration txn named in the bundle only if the trusted
+  // issuer address sent it.
+  const regTxnId =
+    (bundle.protocol === 'pqva/2' ? bundle.keyRegistrationTxnId : bundle.docusignKeyRegistrationTxnId) ||
+    trust.keyRegistrationTxnId;
+
+  let txn: IndexerTxn;
   try {
-    pkHash = (JSON.parse(note) as { pkHash?: unknown }).pkHash;
-  } catch {
-    return 'unavailable';
+    txn = await indexer.txn(regTxnId);
+  } catch (e) {
+    if (e instanceof NotFoundError) {
+      return { status: 'mismatched', detail: `key registration txn ${regTxnId} does not exist` };
+    }
+    return { status: 'unavailable', detail: `could not look up key registration (${(e as Error).message})` };
   }
-  if (typeof pkHash !== 'string') return 'unavailable';
-  const expected = 'sha256:' + sha256hex(resolvePublicKeyBytes(bundle));
-  return pkHash === expected ? 'matched' : 'mismatched';
+  if (txn.sender !== trust.issuerAddress) {
+    return { status: 'mismatched', detail: `key registration ${regTxnId} was not sent by the trusted issuer` };
+  }
+  const note = decodeNote(txn);
+  if (!note || note.op !== 'key-register' || typeof note.pkHash !== 'string') {
+    return { status: 'mismatched', detail: `txn ${regTxnId} is not a pqva key registration` };
+  }
+  return note.pkHash === `sha256:${fingerprint}`
+    ? { status: 'matched', detail: `key registered on-chain by trusted issuer (txn ${regTxnId})` }
+    : { status: 'mismatched', detail: 'public key does not match the on-chain registration' };
 }
 
 export async function verifyBundle(
-  bundle: ProofBundle,
-  pdfBuffer?: Buffer,
+  input: unknown,
+  pdfBuffer: Buffer | undefined,
+  options: VerifyOptions,
 ): Promise<VerifyResult> {
+  const { trust } = options;
+  const indexer = new Indexer(options.indexerUrl ?? DEFAULT_INDEXER_URL, options.fetchImpl ?? fetch);
   const steps: VerifyStep[] = [];
-  let operationalError = false;
 
-  // Schema gate — reject anything that is not a recognisable pqva/1 bundle
-  // before running any checks, so we don't render "undefined" steps.
-  const missing = validateBundleSchema(bundle);
-  if (missing.length > 0) {
+  const problems = validateBundleSchema(input);
+  if (problems.length > 0) {
     return {
       valid: false,
-      steps: [
-        {
-          name: 'Bundle Schema',
-          passed: false,
-          detail: `Not a valid pqva/1 proof bundle — missing fields: ${missing.join(', ')}`,
-        },
-      ],
-      signers: bundle.docusignSigners ?? [],
+      steps: [{ name: 'Bundle Schema', passed: false, detail: `Not a valid proof bundle — bad or missing: ${problems.join(', ')}` }],
+      signers: [],
+      signerSource: 'requester-asserted',
+      documentChecked: false,
       operationalError: false,
     };
   }
+  const bundle = input as ProofBundle;
+  const { signers, signerSource } = bundleSigners(bundle);
 
-  // The public key may be embedded in the bundle (preferred) or supplied via
-  // the environment for legacy bundles. Only error if neither is available.
-  const hasKey = Boolean(bundle.mldsaPublicKey) || Boolean(process.env.DOCUSIGN_MLDSA_PUBLIC_KEY);
-
-  // Step 1 — ML-DSA-65 signature over canonical JSON, plus on-chain key
-  // registration confirmation.
-  if (!hasKey) {
-    operationalError = true;
-    steps.push({
-      name: 'ML-DSA-65 Signature',
-      passed: false,
-      error: true,
-      detail: 'no ML-DSA public key available (not embedded in bundle and DOCUSIGN_MLDSA_PUBLIC_KEY not set)',
-    });
-  } else {
-    try {
-      const sigOk = verifyBundleSignature(bundle);
-      if (!sigOk) {
-        steps.push({
-          name: 'ML-DSA-65 Signature',
-          passed: false,
-          detail: 'signature mismatch',
-        });
-      } else {
-        const reg = await checkKeyRegistration(bundle);
-        if (reg === 'mismatched') {
-          steps.push({
-            name: 'ML-DSA-65 Signature',
-            passed: false,
-            detail: 'public key does not match on-chain registration',
-          });
-        } else {
-          const regDetail =
-            reg === 'matched'
-              ? 'key registration confirmed on-chain'
-              : 'key registration check failed (network)';
-          steps.push({
-            name: 'ML-DSA-65 Signature',
-            passed: true,
-            detail: `NIST FIPS-204 attestation verified offline · ${regDetail}`,
-          });
-        }
-      }
-    } catch (e) {
+  // Step 1 — ML-DSA-65 signature, and the key must belong to the trusted issuer.
+  try {
+    const keyHex = bundle.mldsaPublicKey ?? trust.publicKeyHex;
+    if (!keyHex) {
       steps.push({
-        name: 'ML-DSA-65 Signature',
+        name: STEP_SIGNATURE,
         passed: false,
-        detail: (e as Error).message,
+        error: true,
+        detail: 'legacy bundle has no embedded public key — supply the issuer public key to verify it',
       });
+    } else {
+      const publicKey = parseHex(keyHex, 'mldsaPublicKey', MLDSA65_PUBLIC_KEY_BYTES);
+      if (bundle.protocol === 'pqva/2' && bundle.issuerAddress !== trust.issuerAddress) {
+        steps.push({
+          name: STEP_SIGNATURE,
+          passed: false,
+          detail: `bundle issuer ${bundle.issuerAddress} is not the trusted issuer ${trust.issuerAddress}`,
+        });
+      } else if (!verifyBundleSignature(bundle, publicKey)) {
+        steps.push({ name: STEP_SIGNATURE, passed: false, detail: 'signature mismatch' });
+      } else {
+        const key = await checkKey(publicKey, bundle, trust, indexer);
+        steps.push({
+          name: STEP_SIGNATURE,
+          passed: key.status === 'matched',
+          ...(key.status === 'unavailable' ? { error: true } : {}),
+          detail:
+            key.status === 'matched'
+              ? `NIST FIPS-204 signature valid · ${key.detail}`
+              : `signature is valid but the key is not confirmed as the trusted issuer's: ${key.detail}`,
+        });
+      }
     }
+  } catch (e) {
+    steps.push({ name: STEP_SIGNATURE, passed: false, detail: (e as Error).message });
   }
 
-  // Step 2 — PDF hash match (or informational skip when no PDF supplied).
+  // Step 2 — document hash.
   if (pdfBuffer) {
-    try {
-      const computed = hashDocument(pdfBuffer);
-      const match = computed === bundle.documentHash;
-      steps.push({
-        name: 'PDF Hash',
-        passed: match,
-        detail: match
-          ? computed
-          : `This PDF does not match the archived document — it has been modified or is the wrong file (computed ${computed} != bundle ${bundle.documentHash})`,
-      });
-    } catch (e) {
-      steps.push({ name: 'PDF Hash', passed: false, detail: (e as Error).message });
-    }
+    const computed = hashDocument(pdfBuffer);
+    const match = computed === bundle.documentHash;
+    steps.push({
+      name: STEP_DOCUMENT,
+      passed: match,
+      detail: match
+        ? computed
+        : `This document does not match the anchored one — it was modified or is the wrong file (computed ${computed} != bundle ${bundle.documentHash})`,
+    });
   } else {
     steps.push({
-      name: 'PDF Hash',
+      name: STEP_DOCUMENT,
       passed: true,
       skipped: true,
-      detail: 'Not checked — upload the original PDF to verify document integrity',
+      detail: 'Not checked — no document supplied, so only the bundle itself was verified',
     });
   }
 
   // Step 3 — Merkle inclusion.
   try {
-    const merkleOk = verifyMerkleProof(
-      bundle.merkleRoot,
-      bundle.documentHash,
-      bundle.merkleProof,
-    );
+    const ok =
+      bundle.protocol === 'pqva/2'
+        ? verifyMerkleProof(bundle.merkleRoot, bundle.documentHash, bundle.merkleProof)
+        : verifyLegacyMerkleProof(bundle.merkleRoot, bundle.documentHash, bundle.merkleProof);
     steps.push({
-      name: 'Merkle Inclusion',
-      passed: merkleOk,
-      detail: merkleOk
-        ? `root: ${bundle.merkleRoot.slice(0, 16)}...`
-        : 'documentHash is not a leaf under the Merkle root',
+      name: STEP_MERKLE,
+      passed: ok,
+      detail: ok ? `root: ${bundle.merkleRoot.slice(0, 16)}…` : 'documentHash is not a leaf under the Merkle root',
     });
   } catch (e) {
-    steps.push({ name: 'Merkle Inclusion', passed: false, detail: (e as Error).message });
+    steps.push({ name: STEP_MERKLE, passed: false, detail: (e as Error).message });
   }
 
-  // Step 4 — anchor transaction note contains the Merkle root.
+  // Step 4 — the anchor txn exists, was sent by the trusted issuer in the
+  // claimed round, and its note commits to exactly this Merkle root.
+  let anchoredAt: string | undefined;
   try {
-    const txn = await fetchTransaction(bundle.algorandTxnId);
-    if (!txn.note) throw new Error(`anchor transaction ${bundle.algorandTxnId} has no note field`);
-    const note = Buffer.from(txn.note).toString('utf8');
-    const anchored = note.includes(bundle.merkleRoot);
-    const anchorTime =
-      typeof txn.roundTime === 'number'
-        ? new Date(txn.roundTime * 1000).toISOString()
-        : undefined;
-
-    // Cross-check the bundle's claimed blockTimestamp against the on-chain
-    // round time. A large drift suggests the timestamp was not derived from the
-    // ledger (warn only — never fails a valid anchor).
-    let timeWarning = '';
-    if (
-      anchored &&
-      bundle.blockTimestamp &&
-      typeof txn.roundTime === 'number'
-    ) {
-      const claimed = Date.parse(bundle.blockTimestamp);
-      if (!Number.isNaN(claimed)) {
-        const driftSec = Math.abs(claimed - txn.roundTime * 1000) / 1000;
-        if (driftSec > 60) {
-          timeWarning = ` · warning: bundle blockTimestamp differs from on-chain round time by ${Math.round(driftSec)}s`;
+    const txn = await indexer.txn(bundle.algorandTxnId);
+    const note = decodeNote(txn);
+    const failures: string[] = [];
+    if (txn.sender !== trust.issuerAddress) failures.push(`sender ${txn.sender ?? '?'} is not the trusted issuer`);
+    if (txn['confirmed-round'] !== bundle.algorandRound) {
+      failures.push(`confirmed in round ${txn['confirmed-round'] ?? '?'}, bundle claims ${bundle.algorandRound}`);
+    }
+    if (!note) {
+      failures.push('note is missing or not JSON');
+    } else {
+      if (note.protocol !== bundle.protocol || note.op !== 'anchor') failures.push('note is not a pqva anchor for this protocol version');
+      if (note.merkleRoot !== bundle.merkleRoot) failures.push('note merkleRoot does not match the bundle');
+      if (note.envelopeCount === 1 && note.envelopeIdsSha256 !== envelopeIdsDigest([bundle.envelopeId])) {
+        failures.push('note envelope digest does not match the bundle envelopeId');
+      }
+    }
+    if (typeof txn['round-time'] === 'number') {
+      anchoredAt = new Date(txn['round-time'] * 1000).toISOString();
+      if (bundle.blockTimestamp) {
+        const driftSec = Math.abs(Date.parse(bundle.blockTimestamp) - txn['round-time'] * 1000) / 1000;
+        if (driftSec > MAX_TIMESTAMP_DRIFT_SEC) {
+          failures.push(`bundle blockTimestamp is ${Math.round(driftSec)}s from the on-chain round time`);
         }
       }
     }
-
     steps.push({
-      name: 'Algorand Anchor',
-      passed: anchored,
-      detail: anchored
-        ? `${bundle.algorandTxnId} (round ${bundle.algorandRound}${anchorTime ? `, ${anchorTime}` : ''})${timeWarning}`
-        : `anchor note does not contain merkleRoot ${bundle.merkleRoot}`,
+      name: STEP_ANCHOR,
+      passed: failures.length === 0,
+      detail:
+        failures.length === 0
+          ? `${bundle.algorandTxnId} (round ${bundle.algorandRound}${anchoredAt ? `, ${anchoredAt}` : ''})`
+          : `anchor txn ${bundle.algorandTxnId} rejected: ${failures.join('; ')}`,
     });
   } catch (e) {
-    operationalError = true;
-    steps.push({
-      name: 'Algorand Anchor',
-      passed: false,
-      error: true,
-      detail: `AlgoNode unreachable — cannot confirm on-chain record (${(e as Error).message})`,
-    });
+    if (e instanceof NotFoundError) {
+      steps.push({ name: STEP_ANCHOR, passed: false, detail: `anchor txn ${bundle.algorandTxnId} does not exist` });
+    } else {
+      steps.push({
+        name: STEP_ANCHOR,
+        passed: false,
+        error: true,
+        detail: `ledger indexer unreachable — cannot confirm on-chain record (${(e as Error).message})`,
+      });
+    }
   }
 
-  // Step 5 — Falcon-512 state proof coverage (informational, never blocks valid).
+  // Step 5 — informational: does the indexer report a state-proof txn whose
+  // attested range covers the anchor round? Not a cryptographic check.
   try {
-    const proof = await getStateProofForRound(bundle.algorandRound);
+    const sp = await findStateProofForRound(bundle.algorandRound, options.indexerUrl, options.fetchImpl);
     steps.push({
-      name: 'Falcon-512 State Proof',
+      name: STEP_STATE_PROOF,
       passed: true,
       informational: true,
-      detail: proof
-        ? `state proof transaction found — covers interval up to round ${proof.stateProofRound} (existence confirmed; cryptographic validation requires an Algorand node)`
-        : 'pending — not yet generated (check back in ~20 min)',
+      detail: sp
+        ? `indexer reports a state-proof txn (round ${sp.confirmedRound}) attesting rounds ${sp.firstAttestedRound}–${sp.lastAttestedRound}; the Falcon-512 proof itself is not verified by this tool`
+        : 'no state-proof txn covering this round reported yet (usually ~20 min after anchoring)',
     });
   } catch {
     steps.push({
-      name: 'Falcon-512 State Proof',
+      name: STEP_STATE_PROOF,
       passed: true,
       informational: true,
-      detail: 'pending — ledger API temporarily unavailable',
+      detail: 'indexer unavailable — state-proof status unknown',
     });
   }
 
-  const valid = steps.filter(s => !s.informational).every(s => s.passed);
+  const blocking = steps.filter(s => !s.informational);
+  const valid = blocking.every(s => s.passed);
+  const operationalError = !valid && blocking.filter(s => !s.passed).every(s => s.error);
 
   return {
     valid,
     steps,
-    signers: bundle.docusignSigners ?? [],
+    signers,
+    signerSource,
+    documentChecked: Boolean(pdfBuffer),
+    ...(anchoredAt ? { anchoredAt } : {}),
     operationalError,
   };
 }

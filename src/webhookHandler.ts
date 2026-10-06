@@ -1,94 +1,117 @@
 import { Router, Request, Response } from 'express';
 import { createHmac, timingSafeEqual } from 'crypto';
-import { join } from 'path';
 import { hashDocument } from './documentHasher.js';
-import { buildMerkleTree, getMerkleRoot } from './merkleBatcher.js';
-import { anchorToAlgorand } from './algorandAnchor.js';
-import { assembleBundle, saveBundleToFile } from './proofBundleAssembler.js';
-import { StateProofData } from './stateProofCollector.js';
+import { createProofBundle } from './proofBundleAssembler.js';
 import { downloadEnvelopePdf, getSignerMetadata } from './docusignClient.js';
+import { waitUntil } from '@vercel/functions';
+import { saveRecord, webhookRecordId, ArchiveRecord } from './archiveStore.js';
+import { getStorage } from './storage.js';
+import { isProduction } from './config.js';
+import type { Signer } from './bundleSigner.js';
 
-const SIGNATURE_HEADER = 'x-docusign-signature-1';
-const STATE_PROOF_INTERVAL = 256;
-const BUNDLES_DIR = 'bundles';
+// DocuSign sends one header per active HMAC key (X-DocuSign-Signature-1, -2, …)
+// so keys can be rotated; a request is authentic if any of them matches.
+const MAX_SIGNATURE_HEADERS = 10;
 
 interface DocuSignWebhookBody {
+  // Connect 2.0 JSON (SIM): { event: 'envelope-completed', data: { envelopeId, envelopeSummary: { status } } }
+  event?: string;
+  data?: { envelopeId?: string; envelopeSummary?: { status?: string } };
+  // Legacy/aggregate shape.
   status?: string;
   envelopeId?: string;
-  data?: { envelopeId?: string };
-  // Offline test hook: when DOCUSIGN_ALLOW_TEST_PDF=true, an inline base64 PDF
-  // bypasses the DocuSign download so the pipeline can run without credentials.
+  // Offline test hook, honoured only when DOCUSIGN_ALLOW_TEST_PDF=true outside production.
   testPdfBase64?: string;
 }
 
-function validateSignature(rawBody: Buffer, headerValue: string | undefined): boolean {
-  if (!headerValue) return false;
+function signatureMatches(expected: Buffer, provided: string): boolean {
+  const providedBuf = Buffer.from(provided);
+  return expected.length === providedBuf.length && timingSafeEqual(expected, providedBuf);
+}
+
+function validateSignature(req: Request, rawBody: Buffer): boolean {
   const key = process.env.DOCUSIGN_HMAC_KEY;
   if (!key) return false;
+  const expected = Buffer.from(createHmac('sha256', key).update(rawBody).digest('base64'));
+  let ok = false;
+  for (let i = 1; i <= MAX_SIGNATURE_HEADERS; i++) {
+    const header = req.header(`x-docusign-signature-${i}`);
+    if (header === undefined) break;
+    // Check every header (no early exit) to keep timing independent of position.
+    if (signatureMatches(expected, header)) ok = true;
+  }
+  return ok;
+}
 
-  const expected = createHmac('sha256', key).update(rawBody).digest('base64');
-  const expectedBuf = Buffer.from(expected);
-  const providedBuf = Buffer.from(headerValue);
-  if (expectedBuf.length !== providedBuf.length) return false;
-  return timingSafeEqual(expectedBuf, providedBuf);
+function isCompleted(body: DocuSignWebhookBody): boolean {
+  return (
+    body.event === 'envelope-completed' ||
+    body.data?.envelopeSummary?.status === 'completed' ||
+    body.status === 'completed'
+  );
 }
 
 function extractEnvelopeId(body: DocuSignWebhookBody): string | undefined {
-  const raw = body.envelopeId ?? body.data?.envelopeId;
-  if (!raw) return undefined;
-  // Fix 6: strip path-traversal characters before using in filesystem paths.
+  const raw = body.data?.envelopeId ?? body.envelopeId;
+  if (typeof raw !== 'string') return undefined;
+  // Strip anything that is not safe in an id or file name.
   const sanitized = raw.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 100);
   return sanitized || undefined;
 }
 
-// Fire-and-forget: the webhook responds 200 before this completes so DocuSign
-// does not retry on slow on-chain confirmation.
+function testPdfAllowed(): boolean {
+  return process.env.DOCUSIGN_ALLOW_TEST_PDF === 'true' && !isProduction();
+}
+
+// One durable claim per envelope makes the webhook idempotent across instances:
+// DocuSign retries and replayed requests never anchor the same envelope twice.
+// The claim is released if processing fails so a later retry can succeed.
+const claimKey = (envelopeId: string) => `webhooks/${envelopeId}`;
+
 async function processEnvelope(envelopeId: string, testPdfBase64?: string): Promise<void> {
   let pdfBuffer: Buffer;
-  let docusignSigners: Awaited<ReturnType<typeof getSignerMetadata>> = [];
+  let signers: Signer[] = [];
 
-  if (testPdfBase64 && process.env.DOCUSIGN_ALLOW_TEST_PDF === 'true') {
+  if (testPdfBase64 && testPdfAllowed()) {
     pdfBuffer = Buffer.from(testPdfBase64, 'base64');
   } else {
-    [pdfBuffer, docusignSigners] = await Promise.all([
+    [pdfBuffer, signers] = await Promise.all([
       downloadEnvelopePdf(envelopeId),
       getSignerMetadata(envelopeId),
     ]);
   }
 
   const documentHash = hashDocument(pdfBuffer);
-  const tree = buildMerkleTree([documentHash]);
-  const merkleRoot = getMerkleRoot(tree);
-
-  const { txId, confirmedRound, blockTime } = await anchorToAlgorand(merkleRoot, [envelopeId]);
-
-  // State proof is not yet generated at anchor time; record the covering round.
-  const stateProof: StateProofData = {
-    stateProofRound: Math.ceil(confirmedRound / STATE_PROOF_INTERVAL) * STATE_PROOF_INTERVAL,
-    raw: null,
-  };
-
-  const bundle = assembleBundle({
+  const bundle = await createProofBundle({
+    documentHash,
     envelopeId,
-    pdfBuffer,
-    txId,
-    confirmedRound,
-    merkleTree: tree,
-    stateProof,
-    anchorTime: blockTime,
-    signers: [],
-    docusignSigners,
+    signers,
+    signerSource: 'docusign-connect',
   });
 
-  await saveBundleToFile(bundle, join(BUNDLES_DIR, `${envelopeId}.json`));
+  const record: ArchiveRecord = {
+    id: webhookRecordId(envelopeId),
+    envelopeId,
+    title: `docusign-${envelopeId}`,
+    filename: `${envelopeId}.pdf`,
+    documentHash,
+    signers,
+    signerSource: 'docusign-connect',
+    txId: bundle.algorandTxnId,
+    round: bundle.algorandRound,
+    blockTimestamp: bundle.blockTimestamp,
+    stateProofRound: bundle.stateProofRound,
+    archivedAt: new Date().toISOString(),
+  };
+  await saveRecord(record, JSON.stringify(bundle, null, 2), pdfBuffer);
 }
 
 export const webhookRouter = Router();
 
-webhookRouter.post('/docusign', (req: Request, res: Response): void => {
+webhookRouter.post('/docusign', async (req: Request, res: Response): Promise<void> => {
   const rawBody = req.body as Buffer;
 
-  if (!Buffer.isBuffer(rawBody) || !validateSignature(rawBody, req.header(SIGNATURE_HEADER) ?? undefined)) {
+  if (!Buffer.isBuffer(rawBody) || !validateSignature(req, rawBody)) {
     res.status(400).json({ error: 'invalid or missing signature' });
     return;
   }
@@ -101,8 +124,8 @@ webhookRouter.post('/docusign', (req: Request, res: Response): void => {
     return;
   }
 
-  if (body.status !== 'completed') {
-    res.status(200).json({ received: true, ignored: body.status ?? 'unknown' });
+  if (!isCompleted(body)) {
+    res.status(200).json({ received: true, ignored: body.event ?? body.status ?? 'unknown' });
     return;
   }
 
@@ -112,9 +135,28 @@ webhookRouter.post('/docusign', (req: Request, res: Response): void => {
     return;
   }
 
+  let fresh: boolean;
+  try {
+    fresh = await getStorage().claim(claimKey(envelopeId));
+  } catch (e) {
+    process.stderr.write(`[webhook] claim store unavailable: ${(e as Error).message}\n`);
+    // 503 makes DocuSign retry later.
+    res.status(503).json({ error: 'temporarily unavailable' });
+    return;
+  }
+  if (!fresh) {
+    res.status(200).json({ received: true, envelopeId, duplicate: true });
+    return;
+  }
+
+  // Respond before anchoring so DocuSign does not retry on slow confirmation.
+  // waitUntil keeps the serverless function alive until processing finishes.
   res.status(200).json({ received: true, envelopeId });
 
-  processEnvelope(envelopeId, body.testPdfBase64).catch(e => {
-    process.stderr.write(`[webhook] failed to process envelope ${envelopeId}: ${(e as Error).message}\n`);
-  });
+  waitUntil(
+    processEnvelope(envelopeId, body.testPdfBase64).catch(async e => {
+      process.stderr.write(`[webhook] failed to process envelope ${envelopeId}: ${(e as Error).message}\n`);
+      await getStorage().release(claimKey(envelopeId)).catch(() => undefined);
+    }),
+  );
 });

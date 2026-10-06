@@ -1,54 +1,52 @@
-import { writeFile } from 'fs/promises';
-import { MerkleTree } from 'merkletreejs';
-import { hashDocument } from './documentHasher.js';
-import { getMerkleRoot, getMerkleProof } from './merkleBatcher.js';
-import { signBundle, ProofBundle, SignerMetadata, DocuSignSigner } from './bundleSigner.js';
-import { StateProofData } from './stateProofCollector.js';
+import { buildMerkleTree, getMerkleRoot, getMerkleProof } from './merkleBatcher.js';
+import { anchorToAlgorand } from './algorandAnchor.js';
+import { coveringRound } from './stateProofCollector.js';
+import {
+  signBundle,
+  getKeyRegistrationTxnId,
+  ProofBundleV2,
+  Signer,
+  SignerSource,
+} from './bundleSigner.js';
 
-export interface AssembleParams {
+export interface CreateBundleParams {
+  documentHash: string;
   envelopeId: string;
-  pdfBuffer: Buffer;
-  txId: string;
-  confirmedRound: number;
-  merkleTree: MerkleTree;
-  stateProof: StateProofData;
-  batchId?: string;
-  blockTimestamp?: string;
-  anchorTime?: string;
-  signers?: SignerMetadata[];
-  docusignSigners?: DocuSignSigner[];
+  signers: Signer[];
+  signerSource: SignerSource;
 }
 
-export function assembleBundle(params: AssembleParams): ProofBundle {
-  const documentHash = hashDocument(params.pdfBuffer);
-  const merkleRoot = getMerkleRoot(params.merkleTree);
-  const merkleProof = getMerkleProof(params.merkleTree, documentHash);
+// The single path every entry point (REST, archive upload, webhook, MCP) uses
+// to anchor a document hash and produce a signed pqva/2 bundle.
+//
+// Each call anchors one document in its own Algorand txn (a Merkle tree with a
+// single leaf, so the root is SHA-256(0x00 || documentHash)). The Merkle
+// structure is kept so batching can be added without a format change.
+export async function createProofBundle(params: CreateBundleParams): Promise<ProofBundleV2> {
+  // Fail before spending an Algorand fee if the signing config is incomplete.
+  const keyRegistrationTxnId = getKeyRegistrationTxnId();
 
-  // Only include a ledger-backed timestamp. If neither the anchor round time nor
-  // an explicit value is available, omit the field entirely rather than sign a
-  // local-clock fallback that is not provable against the chain.
-  const blockTimestamp = params.anchorTime ?? params.blockTimestamp;
+  const tree = buildMerkleTree([params.documentHash]);
+  const merkleRoot = getMerkleRoot(tree);
+  const { txId, confirmedRound, sender, blockTime } = await anchorToAlgorand(merkleRoot, [
+    params.envelopeId,
+  ]);
 
-  const unsigned: Omit<ProofBundle, 'signature'> = {
-    protocol: 'pqva/1',
+  return signBundle({
+    protocol: 'pqva/2',
     envelopeId: params.envelopeId,
-    documentHash,
-    batchId: params.batchId ?? params.txId,
+    documentHash: params.documentHash,
+    batchId: txId,
     merkleRoot,
-    merkleProof,
-    algorandTxnId: params.txId,
-    algorandRound: params.confirmedRound,
-    ...(blockTimestamp ? { blockTimestamp } : {}),
-    stateProofRound: params.stateProof.stateProofRound,
-    signingMetadata: { signers: params.signers ?? [] },
-    docusignSigners: params.docusignSigners ?? [],
-    docusignKeyRegistrationTxnId: process.env.DOCUSIGN_KEY_REGISTRATION_TXN_ID ?? '',
+    merkleProof: getMerkleProof(tree, params.documentHash),
+    algorandTxnId: txId,
+    algorandRound: confirmedRound,
+    ...(blockTime ? { blockTimestamp: blockTime } : {}),
+    stateProofRound: coveringRound(confirmedRound),
+    issuerAddress: sender,
+    keyRegistrationTxnId,
+    signers: params.signers,
+    signerSource: params.signerSource,
     algorithm: 'ml-dsa-65',
-  };
-
-  return signBundle(unsigned);
-}
-
-export async function saveBundleToFile(bundle: ProofBundle, outputPath: string): Promise<void> {
-  await writeFile(outputPath, JSON.stringify(bundle, null, 2), 'utf8');
+  });
 }

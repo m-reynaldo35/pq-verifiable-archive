@@ -17,15 +17,19 @@ contract DocuSign processes has a known expiry date.
 ## Solution
 
 A single Connect webhook integration. On envelope completion we SHA-256 the
-completed PDF (never stored), Merkle-batch the hashes, and anchor the batch root in
-an Algorand mainnet transaction. Each envelope gets a self-contained JSON **proof
-bundle** signed with DocuSign's institutional ML-DSA-65 (FIPS-204) key. An offline
-verifier CLI proves any envelope's integrity decades later — without DocuSign's
-servers being up, and without trusting them. **No PII and no document content ever
-touch the chain** — only irreversible hashes.
+completed PDF and anchor a Merkle root over that hash in an Algorand mainnet
+transaction (one transaction per envelope today; batching is a planned cost
+optimisation). Each envelope gets a self-contained JSON **proof bundle** signed with
+an ML-DSA-65 (FIPS-204) issuer key. In the proposed product DocuSign would hold that
+key; in this proof-of-concept the operator of the service holds it. An open-source
+verifier proves any envelope's integrity decades later without DocuSign's servers:
+the signature, document hash and Merkle proof check offline against a pinned issuer
+key, and the anchor is confirmed against any archival Algorand indexer. **No names,
+emails or document content touch the chain** — only hashes, which are pseudonymous
+(anyone holding the document can confirm it was anchored).
 
-This is live today on Algorand mainnet: real transactions, real ML-DSA-65
-signatures, a working verifier.
+This runs today on Algorand mainnet: real transactions, real ML-DSA-65 signatures, a
+working verifier.
 
 ## Why Now
 
@@ -38,10 +42,11 @@ now and closes as competitors and standards bodies move.
 
 ## Why Algorand
 
-Algorand already produces **native Falcon-512 state proofs** — a post-quantum
-attestation over every block, in production today. We anchor into a chain that is
-itself quantum-resistant at the consensus layer. It is public and free to query, so
-verification depends on no vendor. It is permissionless, so there is no lock-in: any
+Algorand already produces **native Falcon-512 state proofs** — post-quantum
+attestations over ledger history, in production today. That gives a path to
+verifying anchors without trusting an indexer; the current verifier only reports
+whether a covering state proof exists and does not yet check it cryptographically.
+The chain is public and free to query, so verification depends on no single vendor. It is permissionless, so there is no lock-in: any
 party can confirm a record against the public ledger forever.
 
 ## Why ML-DSA

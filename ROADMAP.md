@@ -49,10 +49,10 @@ DocuSign Connect Webhook
   Proof Bundle Assembler   ← JSON per envelope: hash + merkle proof + txn + ML-DSA sig
         │
         ▼
-  Offline Verifier CLI     ← given PDF + bundle: outputs VALID/INVALID
-                              steps 1-2 fully offline
-                              steps 3-4 via AlgoNode public API (not DocuSign)
-                              step 5 fully offline
+  Verifier CLI             ← given PDF + bundle + pinned issuer: VALID/INVALID
+                              steps 1-3 offline (step 1 needs a pinned key fingerprint)
+                              step 4 via an Algorand indexer (not DocuSign)
+                              step 5 informational, via an indexer (state proof not yet verified)
 ```
 
 **Proof bundle schema (v1):**
@@ -314,7 +314,7 @@ Single-page app: upload PDF + bundle → verify client-side → step-by-step res
 
 ### 9.2 — Repository hygiene
 - [x] Verify `.gitignore` covers `.env`, `bundles/`, `assets/*.pdf`, `node_modules/`
-- [x] Audit source for hardcoded values — only pinned public txn ID in verifyBundle.ts (intentional)
+- [x] Audit source for hardcoded values — pinned hosted-issuer trust anchor in src/config.ts (intentional, public). Correction (2026-10): a mainnet wallet mnemonic was hardcoded in scripts/test-x402-payment.ts (commit 237054f); removed and secret scanning added — the wallet must be treated as compromised.
 - [x] Review `archive/` — demo data only, `.example` email addresses, no real PII
 
 ### 9.3 — README update
@@ -389,3 +389,22 @@ Single-page app: upload PDF + bundle → verify client-side → step-by-step res
 - **Merkle batching.** One txn per batch rather than one per envelope. Scales to thousands
   of envelopes per day at negligible cost (~$0.001/batch).
 - **Protocol versioning.** `"protocol":"pqva/1"` in every note — future indexers can filter by version.
+
+---
+
+## Security review follow-ups (2026-10)
+
+- [x] Verifier pins the issuer (address + key fingerprint) and fails closed on key-check errors
+- [x] Anchor check verifies sender, round and exact note contents
+- [x] `pqva/2` bundles: RFC 6962-style Merkle tree, `issuerAddress`, `signerSource`
+- [x] Caller-supplied signers labelled `requester-asserted`; webhook signers `docusign-connect`
+- [x] Production fails closed without `PORTAL_API_KEY` / `X402_TREASURY_ADDRESS`; trust proxy; rate limits
+- [x] Moved hosting from Railway to Vercel: single Express function, private Vercel Blob storage, durable replay/webhook claims, `waitUntil` for webhook processing
+- [x] Payment replay guard on `/api/anchor` (durable, cross-instance)
+- [x] Compliance docs corrected to match the implementation
+- [ ] Rotate the leaked payer wallet (`2FBKPEID…`) and purge it from git history
+- [ ] Settle x402 payment before anchoring (library currently settles after the handler)
+- [ ] Verify Falcon-512 state proofs + light-block-header proofs so the indexer need not be trusted
+- [ ] Hold the ML-DSA key in an HSM/KMS
+- [ ] Global rate limiting on Vercel (Firewall rule or shared store); in-app limits are per instance
+- [ ] Regenerate `package-lock.json` (out of sync), drop the unused `merkletreejs` dependency, move `typescript` / `@types/*` to devDependencies

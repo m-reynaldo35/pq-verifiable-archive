@@ -1,87 +1,121 @@
 # Compliance FAQ — PQ Verifiable Archive
 
-For DocuSign Legal, GRC, and Privacy reviewers. Direct answers to the questions a
-compliance review will raise.
+Direct answers to the questions a legal, GRC or privacy review will raise. Each
+answer describes what the code in this repository does today.
 
 ---
 
+### Who is the issuer, and who controls the ML-DSA private key?
+
+The **operator of the service** — whoever runs `src/server.ts` or the MCP server.
+That operator holds the ML-DSA-65 private key and the Algorand wallet mnemonic in
+environment variables (`PQVA_MLDSA_PRIVATE_KEY`, `ALGORAND_MNEMONIC`). DocuSign is not
+the issuer and has no role in signing; the DocuSign integration only receives
+completed envelopes through a Connect webhook.
+
+The operator's Algorand address is the **issuer address**. It sends a one-time
+`key-register` transaction recording the SHA-256 fingerprint of its ML-DSA public
+key, and it sends every anchor transaction. Verifiers pin the issuer address (and,
+optionally, the key fingerprint); they never take it from the bundle.
+
+A production deployment should hold the private key in an HSM or KMS rather than an
+environment variable. This repository does not do that yet.
+
 ### Does anything personally identifiable go on-chain?
 
-No. The only data written to Algorand is a SHA-256 Merkle root — a 32-byte
-irreversible hash of hashes. SHA-256 is a one-way function; the document and its
-contents cannot be reconstructed from it. Under GDPR Recital 26, irreversibly
-anonymised data is not personal data and falls outside the Regulation. No document
-content, no signer names, no email addresses are anchored.
+No names, emails or document content are written on-chain. Each anchor transaction's
+note contains:
+
+- `merkleRoot` — for a single document this is `SHA-256(0x00 || SHA-256(document))`,
+- `envelopeCount` and `envelopeIdsSha256` — a SHA-256 over the envelope identifier(s).
+
+These values are **pseudonymous, not anonymous**. Anyone who holds a copy of the
+document (or can guess the envelope identifier) can recompute the hashes and confirm
+that it was anchored, and when. Under GDPR, data that can be linked back with
+additional information is still personal data where it relates to an identifiable
+person. Treat the on-chain anchor as pseudonymised data in a DPIA, not as data outside
+the Regulation.
 
 ### What data is in the proof bundle, and where does it live?
 
-The proof bundle is a JSON file held **by DocuSign** (stored alongside the envelope,
-or delivered to signers) — it is not published on-chain. It contains:
+The bundle is a JSON file returned to whoever requested the anchor and, for the
+archive and webhook paths, stored by the operator in a private Vercel Blob store. It is not
+published on-chain. It contains:
 
 - the document's SHA-256 hash,
-- the Merkle proof connecting that hash to the anchored batch root,
+- the Merkle proof connecting it to the anchored root,
 - the Algorand transaction ID and confirmed round,
-- signer identity fields (name, email, signed-at timestamp), and
-- DocuSign's ML-DSA-65 signature over all of the above.
+- the issuer address and key-registration transaction ID,
+- an optional signer list (name, email, signed-at) with a `signerSource`,
+- the issuer's ML-DSA-65 public key and signature over all of the above.
 
-The signer identity fields are the same data DocuSign already stores for every
-envelope today. Anchoring adds no new collection.
+The archive also stores the uploaded **PDF itself** (private Vercel Blob store,
+served only through the API-key-protected endpoints), so the operator's normal
+retention, access-control and erasure policies apply to it.
 
-### Who controls the ML-DSA private key?
+### What does the signer list prove?
 
-DocuSign. It is DocuSign's institutional signing key. In production it is held in an
-HSM under DocuSign's existing key-management controls. In the proof-of-concept it is
-loaded from an environment variable. The corresponding public key is registered once
-on-chain so any verifier can confirm signatures without contacting DocuSign.
+It depends on `signerSource`:
 
-### What happens if Algorand goes down or ceases to exist?
+- `docusign-connect` — the operator read the signers from DocuSign's API after an
+  HMAC-verified Connect webhook, using only recipients with a `signedDateTime`.
+- `requester-asserted` — whoever called `/api/anchor`, `/api/archive` or the MCP tool
+  typed the list. The bundle proves the requester **claimed** these signers; the
+  issuer did not verify them.
 
-Signing does not depend on Algorand being live — the chain is only consulted during
-*verification*, not during the signing/anchoring flow. Proof bundles are
-self-contained and DocuSign-held. For verification, any Algorand node can serve the
-historical transaction; the public AlgoNode API is the default, and any indexer
-mirroring mainnet history is an equivalent fallback. The on-chain record is
-immutable and permanent once confirmed.
+All verifiers in this repository label requester-asserted signers as unverified.
+
+### What happens if Algorand or the default indexer goes away?
+
+Anchoring needs Algorand to be live: every bundle is signed *after* its anchor
+transaction confirms. Verification needs:
+
+- **No network** for the signature (when the verifier pins the issuer key
+  fingerprint), the document hash and the Merkle proof.
+- **An archival Algorand indexer** for the anchor check. The public AlgoNode
+  indexer is the default; any archival indexer works (`--indexer`). The verifier
+  trusts the indexer's answer: it checks the anchor's sender, round and note, but
+  does not verify a ledger proof of the transaction.
 
 ### Is ML-DSA a recognised standard?
 
-Yes. ML-DSA is NIST FIPS-204, finalised August 2024, and is approved under CNSA 2.0
-for national-security systems. We use ML-DSA-65 (the NIST security category 3
-parameter set). This is a citable, auditable standard — not a research candidate.
+Yes. ML-DSA is NIST FIPS-204 (August 2024), approved under CNSA 2.0. This project
+uses ML-DSA-65 (security category 3) via `@noble/post-quantum`.
 
-### What is the audit trail for a given envelope?
+### What about Algorand's Falcon-512 state proofs?
 
-For every envelope, the bundle yields:
+Algorand produces Falcon-512 state proofs about every 256 rounds. The verifier only
+reports, as **informational**, whether the indexer lists a state-proof transaction
+whose attested range covers the anchor round. It does not verify the Falcon-512 proof,
+nor a proof linking the anchor transaction to it. Do not rely on it as a security
+property of this tool.
 
-1. an Algorand transaction ID with a block timestamp (independently verifiable on a
-   public ledger),
-2. an ML-DSA-65 signature over the signer identity and document hash, and
-3. a Merkle proof showing the document's inclusion in that anchored batch.
+### What is the audit trail for a given document?
 
-Each element is independently checkable by a third party using only public
-infrastructure and the bundle.
+1. An ML-DSA-65 signature by the pinned issuer key over the bundle.
+2. A Merkle proof from the document hash to the anchored root.
+3. An Algorand transaction, sent by the issuer address in the stated round, whose
+   note contains exactly that root. The ledger round time is the anchoring time.
 
-### How does key rotation work? Does it invalidate old bundles?
+### How does key rotation work?
 
-Rotation is additive. A new on-chain `key-register` transaction records the new
-public-key fingerprint. Bundles signed under the old key remain valid and verifiable
-against the old registered public key — the verifier resolves the key referenced by
-each bundle. No re-signing of historical archives is required.
+The issuer sends a new `key-register` transaction from the same issuer address and
+starts putting the new transaction ID in `keyRegistrationTxnId`. A verifier accepts a
+key if its fingerprint matches the pinned fingerprint, or if the registration
+transaction named in the bundle was sent by the pinned issuer address and records that
+key's fingerprint. Old bundles keep verifying; no re-signing is needed. Rotating the
+issuer **address** requires verifiers to update their pinned address.
 
 ### How does this interact with the GDPR right to erasure?
 
-The bundle holds a hash plus envelope metadata. The hash is not erasable (it is
-anchored immutably) but it is **not personal data** — it is irreversible and
-identifies nothing on its own. The signer name and email in the bundle are stored by
-DocuSign in the same systems and under the same retention and erasure policies as the
-existing envelope record; an erasure request is handled exactly as it is for the
-envelope today. The on-chain anchor contains no erasable personal data because it
-contains no personal data at all.
+The on-chain note cannot be erased. Because it is pseudonymous (see above), assess
+whether anchoring a given document is compatible with erasure obligations before
+anchoring it. Bundles and archived PDFs held by the operator can be deleted under the
+operator's normal processes.
 
 ### Does this change the legal status of the e-signature?
 
-No. This is a long-term integrity *anchor* layered on top of the existing signature.
-It does not replace DocuSign's signing UX, identity verification, or the legal
-e-signature itself, and it makes no claim that the underlying e-signature is
-quantum-proof. It proves, decades later and without trusting any single vendor, that
-a specific document was sealed at a specific time by DocuSign's institutional key.
+No. This is an integrity anchor layered on top of an existing signature. It does not
+replace the e-signature, identity verification or the signing UX, and it makes no
+claim that the underlying e-signature is quantum-resistant. It shows that a specific
+document hash was anchored by a specific issuer at a specific ledger time.

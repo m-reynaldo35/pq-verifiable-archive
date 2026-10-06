@@ -1,8 +1,10 @@
-import 'dotenv/config';
+// Standalone verifier. Deliberately does not load .env: what this tool trusts
+// must come from its own flags, not from whatever file is in the current
+// directory.
 import { readFile } from 'fs/promises';
 import { Command } from 'commander';
-import { ProofBundle } from '../src/bundleSigner.js';
 import { verifyBundle } from '../src/verifyBundle.js';
+import { DEFAULT_INDEXER_URL, HOSTED_ISSUER, TrustAnchor } from '../src/config.js';
 
 const EXIT_VALID = 0;
 const EXIT_INVALID = 1;
@@ -13,75 +15,96 @@ function errorOut(message: string): never {
   process.exit(EXIT_ERROR);
 }
 
-async function loadBundle(path: string): Promise<ProofBundle> {
-  let text: string;
-  try {
-    text = await readFile(path, 'utf8');
-  } catch {
-    errorOut(`cannot read bundle file: ${path}`);
-  }
-  try {
-    return JSON.parse(text) as ProofBundle;
-  } catch {
-    errorOut(`bundle is not valid JSON: ${path}`);
-  }
-}
-
 async function main() {
   const program = new Command();
   program
+    .description(
+      'Verify a pqva proof bundle. Exit codes: 0 = valid, 1 = invalid, 2 = could not verify (network/config).\n' +
+        'Without --issuer-address the built-in issuer of the hosted pq-verifiable-archive service is trusted.',
+    )
     .requiredOption('--bundle <path>', 'path to proof bundle JSON')
-    .option('--pdf <path>', 'path to original PDF for hash verification')
+    .option('--pdf <path>', 'path to the original document; without it only the bundle is verified')
+    .option('--issuer-address <addr>', 'trusted issuer Algorand address')
+    .option('--key-reg-txn <txid>', 'trusted issuer key registration txn id (required with --issuer-address)')
+    .option('--pk-sha256 <hex>', 'sha256 of the trusted issuer ML-DSA-65 public key (makes the key check offline)')
+    .option('--public-key-file <path>', 'hex ML-DSA-65 public key, only needed for legacy bundles without an embedded key')
+    .option('--indexer <url>', 'Algorand indexer URL', DEFAULT_INDEXER_URL)
     .parse();
 
-  const opts = program.opts<{ bundle: string; pdf?: string }>();
-  const bundle = await loadBundle(opts.bundle);
+  const opts = program.opts<{
+    bundle: string;
+    pdf?: string;
+    issuerAddress?: string;
+    keyRegTxn?: string;
+    pkSha256?: string;
+    publicKeyFile?: string;
+    indexer: string;
+  }>();
+
+  let trust: TrustAnchor;
+  if (opts.issuerAddress) {
+    if (!opts.keyRegTxn) errorOut('--key-reg-txn is required with --issuer-address');
+    trust = { issuerAddress: opts.issuerAddress, keyRegistrationTxnId: opts.keyRegTxn, pkSha256: opts.pkSha256 };
+  } else {
+    trust = { ...HOSTED_ISSUER };
+  }
+  if (opts.publicKeyFile) {
+    try {
+      trust.publicKeyHex = (await readFile(opts.publicKeyFile, 'utf8')).trim();
+    } catch {
+      errorOut(`cannot read public key file: ${opts.publicKeyFile}`);
+    }
+  }
+
+  let bundle: unknown;
+  try {
+    bundle = JSON.parse(await readFile(opts.bundle, 'utf8'));
+  } catch {
+    errorOut(`cannot read bundle file or it is not valid JSON: ${opts.bundle}`);
+  }
 
   let pdfBuffer: Buffer | undefined;
   if (opts.pdf) {
     try {
       pdfBuffer = await readFile(opts.pdf);
     } catch {
-      errorOut(`cannot read PDF file: ${opts.pdf}`);
+      errorOut(`cannot read document file: ${opts.pdf}`);
     }
   }
 
-  const result = await verifyBundle(bundle, pdfBuffer);
+  console.log(`Trusted issuer: ${trust.issuerAddress}${opts.issuerAddress ? '' : ' (built-in default: hosted service)'}`);
+  const result = await verifyBundle(bundle, pdfBuffer, { trust, indexerUrl: opts.indexer });
 
   for (const step of result.steps) {
-    if (step.informational) {
-      console.log(`  ${step.name.toLowerCase()}: ${step.detail}`);
-    } else if (step.skipped) {
-      console.log(`– ${step.name}: ${step.detail}`);
-    } else if (step.error) {
-      console.error(`! ${step.name}: ${step.detail}`);
-    } else if (step.passed) {
-      console.log(`✓ ${step.name}: ${step.detail}`);
-    } else {
-      console.error(`✗ ${step.name}: ${step.detail}`);
-    }
+    if (step.informational) console.log(`  ${step.name}: ${step.detail}`);
+    else if (step.skipped) console.log(`– ${step.name}: ${step.detail}`);
+    else if (step.error) console.error(`! ${step.name}: ${step.detail}`);
+    else if (step.passed) console.log(`✓ ${step.name}: ${step.detail}`);
+    else console.error(`✗ ${step.name}: ${step.detail}`);
   }
 
   if (result.signers.length > 0) {
-    console.log('\nSigners:');
-    for (const s of result.signers) {
-      console.log(`  ${s.name} <${s.email}> — signed ${s.signedAt}`);
-    }
+    console.log(
+      result.signerSource === 'docusign-connect'
+        ? '\nSigners (reported by DocuSign to the issuer):'
+        : '\nSigners (asserted by the requester, NOT verified):',
+    );
+    for (const s of result.signers) console.log(`  ${s.name} <${s.email}> — signed ${s.signedAt}`);
   }
 
   if (result.valid) {
-    console.log('\nVALID ✓');
-    const asOf = bundle.blockTimestamp ? ` as of ${bundle.blockTimestamp}` : '';
-    console.log(`        Document integrity proven${asOf}.`);
-    console.log('        AlgoNode confirms on-chain record. DocuSign attestation verified offline.');
+    const asOf = result.anchoredAt ? ` as of ${result.anchoredAt} (ledger time)` : '';
+    if (result.documentChecked) {
+      console.log('\nVALID ✓');
+      console.log(`        Document matches the hash anchored by the trusted issuer${asOf}.`);
+    } else {
+      console.log('\nBUNDLE VALID — document not checked');
+      console.log(`        The bundle is authentic and anchored${asOf}, but no document was supplied (--pdf).`);
+    }
     process.exit(EXIT_VALID);
   }
 
-  // Only show COULD NOT VERIFY if every failing step is an operational/network error.
-  // If any real check failed (signature mismatch, hash mismatch) → INVALID.
-  const failingSteps = result.steps.filter(s => !s.informational && !s.passed);
-  const allOperational = failingSteps.length > 0 && failingSteps.every(s => s.error);
-  if (allOperational) {
+  if (result.operationalError) {
     console.error('\nCOULD NOT VERIFY — network or configuration error');
     process.exit(EXIT_ERROR);
   }

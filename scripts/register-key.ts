@@ -10,7 +10,7 @@ async function main() {
   if (!mnemonic) throw new Error('ALGORAND_MNEMONIC not set in .env');
 
   const account = algosdk.mnemonicToSecretKey(mnemonic);
-  const algodUrl = process.env.ALGONODE_ALGOD || 'https://mainnet-api.algonode.cloud';
+  const algodUrl = process.env.ALGORAND_NODE_URL || process.env.ALGONODE_ALGOD || 'https://mainnet-api.algonode.cloud';
   const algod = new algosdk.Algodv2('', algodUrl, '');
 
   // Generate ML-DSA key pair
@@ -25,7 +25,7 @@ async function main() {
 
   // Build registration note — ~120 bytes
   const note = JSON.stringify({
-    protocol: 'pqva/1',
+    protocol: 'pqva/2',
     op: 'key-register',
     v: 1,
     alg: 'ml-dsa-65',
@@ -52,10 +52,15 @@ async function main() {
   console.log('Explorer: https://explorer.perawallet.app/tx/' + txid);
   console.log('PK Hash :', pkHash);
   console.log('');
-  console.log('Add to .env:');
-  console.log(`DOCUSIGN_MLDSA_PUBLIC_KEY="${publicKeyHex}"`);
-  console.log(`DOCUSIGN_MLDSA_PRIVATE_KEY="${privateKeyHex}"`);
-  console.log(`DOCUSIGN_KEY_REGISTRATION_TXN_ID="${txid}"`);
+  console.log('Add to the issuing service .env (keep the private key secret):');
+  console.log(`PQVA_MLDSA_PUBLIC_KEY="${publicKeyHex}"`);
+  console.log(`PQVA_MLDSA_PRIVATE_KEY="${privateKeyHex}"`);
+  console.log(`PQVA_KEY_REGISTRATION_TXN_ID="${txid}"`);
+  console.log('');
+  console.log('Give verifiers these trust-anchor values (public):');
+  console.log(`PQVA_TRUSTED_ISSUER_ADDRESS="${account.addr.toString()}"`);
+  console.log(`PQVA_TRUSTED_KEY_REG_TXN_ID="${txid}"`);
+  console.log(`PQVA_TRUSTED_PK_SHA256="${pkHash.slice('sha256:'.length)}"`);
 }
 
 main().catch(e => { console.error(e); process.exit(1); });

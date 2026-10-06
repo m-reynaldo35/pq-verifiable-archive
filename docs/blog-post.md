@@ -25,7 +25,7 @@ The flow is straightforward:
 1. Take a SHA-256 hash of your signed PDF
 2. Anchor that hash to Algorand mainnet in a transaction note
 3. Sign a self-contained **proof bundle** with ML-DSA-65 (NIST FIPS-204)
-4. Hand anyone the bundle — they can verify it offline, decades from now, without trusting any vendor
+4. Hand anyone the bundle — they can verify it decades from now with the open-source verifier: signature, hash and Merkle proof offline against a pinned issuer key, the anchor against any archival Algorand indexer
 
 The bundle looks like this:
 
@@ -51,10 +51,19 @@ Nothing in the bundle reveals document contents. Only irreversible hashes touch 
 
 ## Five checks, three offline
 
-The verifier runs five checks. Three of them need no network connection at all — they work from the bundle alone:
+The verifier pins the issuer (its Algorand address and ML-DSA key fingerprint) instead of trusting whatever key a bundle carries. Three checks need no network connection when the key fingerprint is pinned:
 
 | Check | What it proves | Network? |
 |-------|---------------|----------|
+| ML-DSA-65 signature + issuer key | The trusted issuer signed this bundle and it hasn't changed since | No (with pinned fingerprint) |
+| SHA-256(PDF) match | This is the anchored document | No (needs the PDF) |
+| Merkle inclusion | This hash is under the anchored root | No |
+| Algorand anchor | The issuer's address put exactly this root on-chain, in the stated round | Algorand indexer |
+| State proof (informational) | An indexer lists a Falcon-512 state-proof txn covering that round | Algorand indexer |
+
+Steps 4 and 5 query a public Algorand indexer — AlgoNode by default, or any archival indexer you choose — not a private vendor API. The verifier trusts the indexer's answer for those steps, and it does not yet verify the Falcon-512 state proof cryptographically; that is the next step towards removing trust in the indexer.
+
+-------|---------------|----------|
 | ML-DSA-65 signature | Bundle hasn't been tampered with since signing | No |
 | SHA-256(PDF) match | Correct document was anchored | No (needs PDF) |
 | Merkle inclusion | This hash is under the claimed root | No |
@@ -79,9 +88,9 @@ PQ Verifiable Archive ships as a Model Context Protocol server. Add it to Claude
       "args": ["tsx", "/path/to/pq-verifiable-archive/src/mcp-server.ts"],
       "env": {
         "ALGORAND_MNEMONIC": "your 25-word mnemonic",
-        "DOCUSIGN_MLDSA_PUBLIC_KEY": "...",
-        "DOCUSIGN_MLDSA_PRIVATE_KEY": "...",
-        "DOCUSIGN_KEY_REGISTRATION_TXN_ID": "..."
+        "PQVA_MLDSA_PUBLIC_KEY": "...",
+        "PQVA_MLDSA_PRIVATE_KEY": "...",
+        "PQVA_KEY_REGISTRATION_TXN_ID": "..."
       }
     }
   }
@@ -99,7 +108,7 @@ An agent executing a contract can anchor the signed hash immediately after execu
 
 ## Pay per anchor via x402 on the hosted API
 
-If you don't want to run your own node, the hosted API at `pq-verifiable-archive-production.up.railway.app` charges **$0.01 USDC per anchor** using the x402 micropayment protocol on Algorand.
+If you don't want to run your own node, the hosted API at `pq-verifiable-archive.vercel.app` charges **$0.01 USDC per anchor** using the x402 micropayment protocol on Algorand.
 
 The flow is entirely automated:
 
@@ -137,7 +146,7 @@ Each run: payment verified by GoPlausible facilitator → atomic group submitted
 
 Two reasons that matter for long-lived documents.
 
-**Native post-quantum state proofs.** Algorand produces Falcon-512 proofs over every ~256-round interval automatically. The anchor doesn't just sit in a transaction note — it sits in a block that is itself covered by a post-quantum attestation. You get two layers of quantum resistance: ML-DSA-65 on the bundle, Falcon-512 on the ledger.
+**Native post-quantum state proofs.** Algorand produces Falcon-512 state proofs over every ~256-round interval automatically, so the block holding the anchor is covered by a post-quantum attestation produced by the network. Today the verifier only reports that coverage; verifying the state proof itself, so that no indexer has to be trusted, is on the roadmap.
 
 **Permissionless verification.** Any party can query the Algorand public indexer forever. The integrity of a document from 2026 doesn't depend on this project's servers being up in 2040. It depends on the public Algorand ledger — which anyone can run a node for.
 
