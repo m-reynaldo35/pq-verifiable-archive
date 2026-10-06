@@ -6,3 +6,9 @@ useDefault = true
 id = "algorand-mnemonic"
 description = "Algorand 25-word mnemonic"
 regex = '''['"`]([a-z]{3,8} ){24}[a-z]{3,8}['"`]'''
+
+# Public on-chain values pinned as the hosted issuer's trust anchor (an
+# Algorand transaction ID is not a secret).
+[allowlist]
+description = "Pinned public Algorand trust-anchor values"
+regexes = ['''BUVBKZAYLHFLAX4WLD7KA7OQZAE4QYHGY3SHY3TVKVJFGQXP3IJA''']
