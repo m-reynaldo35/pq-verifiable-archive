@@ -239,3 +239,42 @@ test('with several trusted issuers, a bundle is checked against its own issuer o
   assert.equal(onlyOther.valid, false);
   assert.match(onlyOther.steps[0].detail, /not a trusted issuer/);
 });
+
+test('a pinned key fingerprint is strict: another key registered by the issuer is rejected', async () => {
+  const otherReg = txid('Q');
+  useKeys(attackerKeys, otherReg);
+  const bundle = makeBundle({ keyRegistrationTxnId: otherReg });
+  chain[otherReg] = regTxn(ISSUER, attackerKeys.publicKey); // registered by the trusted issuer
+  chain[ANCHOR_TXN] = anchorTxn(bundle);
+  const pinned: TrustAnchor = { ...trust, pkSha256: sha(Buffer.from(issuerKeys.publicKey)) };
+  const r = await verifyBundle(bundle, PDF, { ...opts, trust: pinned });
+  assert.equal(r.valid, false);
+  assert.match(step(r, 'ML-DSA-65 Signature').detail, /not the pinned key/);
+  // Without a pin, on-chain registration by the issuer is accepted (rotation).
+  const rotated = await verifyBundle(bundle, PDF, opts);
+  assert.equal(rotated.valid, true, JSON.stringify(rotated.steps));
+});
+
+test('issuer scope: protocol and maxRound limits are enforced', async () => {
+  const bundle = makeBundle();
+  chain[ANCHOR_TXN] = anchorTxn(bundle);
+  const v1Only = await verifyBundle(bundle, PDF, { ...opts, trust: { ...trust, protocols: ['pqva/1'] } });
+  assert.equal(v1Only.valid, false);
+  assert.match(step(v1Only, 'ML-DSA-65 Signature').detail, /only trusted for pqva\/1/);
+  const retired = await verifyBundle(bundle, PDF, { ...opts, trust: { ...trust, maxRound: ROUND - 1 } });
+  assert.equal(retired.valid, false);
+  assert.match(step(retired, 'ML-DSA-65 Signature').detail, /retired/);
+});
+
+test('hosted legacy issuer cannot vouch for pqva/2 bundles', async () => {
+  const forged = { ...makeBundle(), issuerAddress: LEGACY_HOSTED_ISSUER.issuerAddress };
+  const r = await verifyBundle(forged, PDF, { ...opts, trust: HOSTED_ISSUERS });
+  assert.equal(r.valid, false);
+});
+
+test('a top-level __proto__ key is rejected by the schema check', async () => {
+  const bundle = JSON.parse(JSON.stringify(makeBundle()).replace('{', '{"__proto__":{"x":1},'));
+  const r = await verifyBundle(bundle, PDF, opts);
+  assert.equal(r.valid, false);
+  assert.match(r.steps[0].detail, /__proto__/);
+});

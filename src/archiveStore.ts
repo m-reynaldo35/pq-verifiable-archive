@@ -28,7 +28,8 @@ const recordKey = (id: string) => `records/${id}.json`;
 const bundleKey = (id: string) => `bundles/${id}.json`;
 const pdfKey = (id: string) => `pdfs/${id}.pdf`;
 
-const MAX_LISTED_RECORDS = 500;
+// Newest records first (ids sort that way), fetched in full, so keep this modest.
+const MAX_LISTED_RECORDS = 200;
 const ID_RE = /^[a-z0-9-]{1,80}$/;
 
 // The demo sample ships with the code (read-only) instead of being copied into
@@ -60,12 +61,18 @@ async function sampleRecord(): Promise<ArchiveRecord | undefined> {
   };
 }
 
+// Record ids start with a fixed-width, decreasing timestamp, so the storage
+// listing (lexicographic) returns the newest records first.
+const TIME_BASE = 1e13;
 export function newRecordId(slug: string): string {
-  return `doc-${randomUUID().slice(0, 12)}-${slug}`;
+  const inverted = (TIME_BASE - Date.now()).toString(36).padStart(9, '0');
+  return `${inverted}-${randomUUID().slice(0, 6)}-${slug}`.slice(0, 80).replace(/-+$/, '');
 }
 
-export function webhookRecordId(envelopeId: string): string {
-  return `ds-${envelopeId.toLowerCase().replace(/[^a-z0-9-]/g, '-')}`.slice(0, 80);
+// Canonical form of a DocuSign envelope id, used for both the webhook's
+// de-duplication claim and its record id so the two can never disagree.
+export function webhookCanonicalId(envelopeId: string): string {
+  return envelopeId.toLowerCase().replace(/[^a-z0-9-]/g, '-').slice(0, 60);
 }
 
 export async function listRecords(): Promise<ArchiveRecord[]> {
@@ -74,8 +81,14 @@ export async function listRecords(): Promise<ArchiveRecord[]> {
   const records = (
     await Promise.all(
       keys.map(async k => {
-        const raw = await storage.get(k);
-        return raw ? (JSON.parse(raw.toString('utf8')) as ArchiveRecord) : undefined;
+        try {
+          const raw = await storage.get(k);
+          return raw ? (JSON.parse(raw.toString('utf8')) as ArchiveRecord) : undefined;
+        } catch (e) {
+          // One unreadable record must not hide the rest of the archive.
+          console.error(`skipping unreadable archive record ${k}: ${(e as Error).message}`);
+          return undefined;
+        }
       }),
     )
   ).filter((r): r is ArchiveRecord => Boolean(r));

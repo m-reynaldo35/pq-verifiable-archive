@@ -9,10 +9,12 @@ import { rateLimit } from 'express-rate-limit';
 import path from 'node:path';
 import { webhookRouter } from './webhookHandler.js';
 import { assertSigningKeysConsistent } from './bundleSigner.js';
+import type { Signer } from './bundleSigner.js';
 import { verifyBundle, VerifyOptions } from './verifyBundle.js';
 import { hashDocument } from './documentHasher.js';
 import { createProofBundle } from './proofBundleAssembler.js';
-import { requireAnchorPayment, paymentReplayGuard } from './anchorPaywall.js';
+import { requireAnchorPayment, markPaymentFulfilled } from './anchorPaywall.js';
+import { issuerStatus } from './issuerCheck.js';
 import { validateSigners, validateEnvelopeId } from './signers.js';
 import { isProduction, trustAnchorFromEnv } from './config.js';
 import {
@@ -64,6 +66,7 @@ const verifyOptions: VerifyOptions = {
 };
 
 export const app = express();
+app.disable('x-powered-by');
 
 if (misconfigured) {
   app.use((_req, res) => {
@@ -99,7 +102,13 @@ function apiKeyDigest(value: string): Buffer {
 function requireApiKey(req: express.Request, res: express.Response, next: express.NextFunction): void {
   const key = process.env.PORTAL_API_KEY;
   if (!key) {
-    next();
+    // Fail closed: an unset key never means "open" unless explicitly allowed
+    // for local development.
+    if (process.env.PQVA_ALLOW_OPEN_PORTAL === 'true') {
+      next();
+      return;
+    }
+    res.status(503).json({ error: 'operator API key not configured' });
     return;
   }
   const auth = req.headers['authorization'];
@@ -176,7 +185,18 @@ app.post(
   },
 );
 
-app.post('/api/archive', archiveLimiter, requireApiKey, upload.single('pdf'), async (req, res) => {
+// Refuse to anchor (or take payment) unless the issuer wallet, the key
+// registration and the signing key agree. Checked once per instance.
+async function requireIssuerReady(_req: express.Request, res: express.Response, next: express.NextFunction): Promise<void> {
+  const status = await issuerStatus();
+  if (status.ok) {
+    next();
+    return;
+  }
+  res.status(503).json({ error: status.retryable ? 'issuer check unavailable — retry shortly' : 'issuer misconfigured' });
+}
+
+app.post('/api/archive', archiveLimiter, requireApiKey, requireIssuerReady, upload.single('pdf'), async (req, res) => {
   const file = req.file;
   if (!file) {
     res.status(400).json({ error: 'pdf file is required' });
@@ -253,7 +273,7 @@ app.post('/api/archive', archiveLimiter, requireApiKey, upload.single('pdf'), as
   }
 });
 
-app.get('/api/documents', requireApiKey, async (_req, res) => {
+app.get('/api/documents', verifyLimiter, requireApiKey, async (_req, res) => {
   try {
     res.json(await listRecords());
   } catch (e) {
@@ -317,65 +337,103 @@ app.post('/api/documents/:id/verify', verifyLimiter, requireApiKey, upload.singl
   }
 });
 
-// /api/anchor: rate limit and replay guard first, then the x402 paywall.
-app.use('/api/anchor', anchorLimiter, paymentReplayGuard());
-if (process.env.X402_TREASURY_ADDRESS) {
-  app.use(requireAnchorPayment());
-}
-
 // POST /api/anchor — agent-friendly JSON endpoint for hash anchoring.
 // Accepts { hash, envelope_id?, signers? }, returns a proof bundle.
-app.post('/api/anchor', express.json({ limit: '64kb' }), async (req, res) => {
+//
+// Order matters: the request is validated and the issuer checked BEFORE the
+// paywall settles the payment, so a client is never charged for a request
+// that cannot succeed. A request without a payment header skips validation
+// and gets the 402 payment instructions.
+interface AnchorInput {
+  hash: string;
+  envelopeId: string;
+  signers: Signer[];
+}
+
+function parseAnchorRequest(req: express.Request, res: express.Response, next: express.NextFunction): void {
   const body = (req.body ?? {}) as { hash?: unknown; envelope_id?: unknown; signers?: unknown };
+  const hasPayment = Boolean(req.header('payment-signature'));
+  const fail = (error: string) => {
+    if (hasPayment || !process.env.X402_TREASURY_ADDRESS) res.status(400).json({ error });
+    else next();
+  };
 
   const hash = body.hash;
   if (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash)) {
-    res.status(400).json({ error: 'hash must be a 64-character lowercase hex SHA-256 string' });
+    fail('hash must be a 64-character lowercase hex SHA-256 string');
     return;
   }
-
   let envelopeId = `doc-${Date.now()}`;
   if (body.envelope_id !== undefined) {
     const valid = validateEnvelopeId(body.envelope_id);
     if (!valid) {
-      res.status(400).json({ error: 'envelope_id must be 1-128 characters of [A-Za-z0-9._:-]' });
+      fail('envelope_id must be 1-128 characters of [A-Za-z0-9._:-]');
       return;
     }
     envelopeId = valid;
   }
-
   const checked = validateSigners(body.signers);
   if ('error' in checked) {
-    res.status(400).json({ error: checked.error });
+    fail(checked.error);
     return;
   }
+  res.locals.anchorInput = { hash, envelopeId, signers: checked.signers } satisfies AnchorInput;
+  next();
+}
 
-  try {
-    const bundle = await createProofBundle({
-      documentHash: hash,
-      envelopeId,
-      signers: checked.signers,
-      signerSource: 'requester-asserted',
-    });
+const anchorPaywall: express.RequestHandler = process.env.X402_TREASURY_ADDRESS
+  ? requireAnchorPayment()
+  : (_req, _res, next) => next();
 
-    console.log(
-      JSON.stringify({
-        event: 'anchor',
-        hash,
-        envelopeId,
-        algorandTxnId: bundle.algorandTxnId,
-        round: bundle.algorandRound,
-        timestamp: new Date().toISOString(),
-        ip: req.ip,
-      }),
-    );
+app.post(
+  '/api/anchor',
+  anchorLimiter,
+  express.json({ limit: '64kb' }),
+  parseAnchorRequest,
+  requireIssuerReady,
+  anchorPaywall,
+  async (req, res) => {
+    const input = res.locals.anchorInput as AnchorInput | undefined;
+    if (!input) {
+      res.status(400).json({ error: 'hash must be a 64-character lowercase hex SHA-256 string' });
+      return;
+    }
+    try {
+      const bundle = await createProofBundle({
+        documentHash: input.hash,
+        envelopeId: input.envelopeId,
+        signers: input.signers,
+        signerSource: 'requester-asserted',
+      });
+      await markPaymentFulfilled(res);
 
-    res.json({ success: true, algorandTxnId: bundle.algorandTxnId, algorandRound: bundle.algorandRound, bundle });
-  } catch (e) {
-    console.error(`anchor failed: ${(e as Error).message}`);
-    res.status(500).json({ error: 'anchor failed due to an internal error' });
-  }
-});
+      console.log(
+        JSON.stringify({
+          event: 'anchor',
+          hash: input.hash,
+          envelopeId: input.envelopeId,
+          algorandTxnId: bundle.algorandTxnId,
+          round: bundle.algorandRound,
+          timestamp: new Date().toISOString(),
+          ip: req.ip,
+        }),
+      );
+
+      res.json({ success: true, algorandTxnId: bundle.algorandTxnId, algorandRound: bundle.algorandRound, bundle });
+    } catch (e) {
+      console.error(`anchor failed: ${(e as Error).message}`);
+      res.status(500).json({
+        error: 'anchor failed due to an internal error',
+        ...(res.locals.paymentKey
+          ? {
+              paymentSettled: true,
+              retry: 'Your payment was settled. Resend the same request with the same payment-signature header after 30 seconds to receive your bundle.',
+            }
+          : {}),
+      });
+    }
+  },
+);
 
 app.use((err: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
   if (err instanceof multer.MulterError) {

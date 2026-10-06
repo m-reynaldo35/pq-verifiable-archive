@@ -119,7 +119,7 @@ Verifying your own bundles: pass your issuer to the verifier, e.g.
 The app runs on Vercel as one serverless function (`api/index.ts`) with `public/` served from the CDN (see `vercel.json`).
 
 1. Import the repository as a Vercel project (framework preset: Other; no build command needed).
-2. **Storage:** create a **private** Blob store and connect it to the project (this sets `BLOB_READ_WRITE_TOKEN`). It stores archived PDFs and bundles plus the payment-replay and webhook claims.
+2. **Storage:** create a **private** Blob store and connect it to the project (this sets `BLOB_READ_WRITE_TOKEN`). It stores archived PDFs and bundles plus the payment and webhook claims.
 3. **Environment variables** (Production): `ALGORAND_MNEMONIC`, `PQVA_MLDSA_PUBLIC_KEY`, `PQVA_MLDSA_PRIVATE_KEY`, `PQVA_KEY_REGISTRATION_TXN_ID`, `PORTAL_API_KEY`, `X402_TREASURY_ADDRESS`, and for DocuSign `DOCUSIGN_HMAC_KEY` plus the `DOCUSIGN_*` API credentials. Mark the secrets as Sensitive.
 4. Optional: add a Vercel Firewall rate-limit rule for `/api/anchor` and `/api/verify`. The in-app limits apply per function instance only.
 

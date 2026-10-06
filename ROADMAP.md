@@ -399,13 +399,13 @@ Single-page app: upload PDF + bundle → verify client-side → step-by-step res
 - [x] `pqva/2` bundles: RFC 6962-style Merkle tree, `issuerAddress`, `signerSource`
 - [x] Caller-supplied signers labelled `requester-asserted`; webhook signers `docusign-connect`
 - [x] Production fails closed without `PORTAL_API_KEY` / `X402_TREASURY_ADDRESS`; trust proxy; rate limits
-- [x] Moved hosting from Railway to Vercel: single Express function, private Vercel Blob storage, durable replay/webhook claims, `waitUntil` for webhook processing
-- [x] Payment replay guard on `/api/anchor` (durable, cross-instance)
+- [x] Moved hosting from Railway to Vercel: single Express function, private Vercel Blob storage, durable payment/webhook claims
+- [x] x402 payment settled before anchoring; one anchor per payment txn id (second review M-A/M-B)
 - [x] Compliance docs corrected to match the implementation
 - [x] New hosted issuer XCJOXAMH… (key registration S7NGS2LD…) and new x402 treasury 6EP3PSKD… created 2026-10-06; verifiers trust both the new issuer and the original JJNDY3TL… issuer
-- [ ] Rotate the leaked payer wallet (`2FBKPEID…`) and purge it from git history
-- [ ] Settle x402 payment before anchoring (library currently settles after the handler)
+- [x] Leaked payer key retired: `2FBKPEID…` and the 10 accounts rekeyed to it were rekeyed to a new operator key (2026-10-06). Purging git history is optional; the old phrase controls nothing.
 - [ ] Verify Falcon-512 state proofs + light-block-header proofs so the indexer need not be trusted
 - [ ] Hold the ML-DSA key in an HSM/KMS
 - [ ] Global rate limiting on Vercel (Firewall rule or shared store); in-app limits are per instance
-- [ ] Regenerate `package-lock.json` (out of sync), drop the unused `merkletreejs` dependency, move `typescript` / `@types/*` to devDependencies
+- [x] Lockfile regenerated, `npm ci` in CI, payment/storage libraries pinned, `merkletreejs` dropped
+- [x] Second security review (2026-10-06) fixes: webhook processed before responding (retryable), facilitator sync can no longer crash an instance, legacy issuer limited to pqva/1 up to round 62159611, strict key pins, `__proto__` rejected, nonce-checked claims, API key fails closed, canonical webhook ids, newest-first archive listing, issuer self-check, MCP ignores `.env` trust settings

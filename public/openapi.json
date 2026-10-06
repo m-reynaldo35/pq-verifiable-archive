@@ -50,7 +50,7 @@
       "post": {
         "summary": "Anchor a document hash to Algorand mainnet",
         "operationId": "anchorDocument",
-        "description": "Requires an x402 payment of $0.01 USDC on Algorand mainnet. Send the request without a payment header first to receive the 402 payment-required instructions, then resend with the payment-signature header. Each payment header can be used once (reuse returns 409). Rate limited to 10 requests per minute per client.",
+        "description": "Requires an x402 payment of $0.01 USDC on Algorand mainnet. Send the request without a payment header first to receive the 402 payment-required instructions, then resend with the payment-signature header. The payment is settled before anchoring; each payment transaction buys exactly one anchor (reuse returns 409). If anchoring fails after settlement the 500 response says paymentSettled: true, and resending the same request with the same header after 30 s returns the bundle. Rate limited per server instance.",
         "requestBody": {
           "required": true,
           "content": {
@@ -245,6 +245,9 @@
           },
           "429": {
             "description": "Rate limit exceeded"
+          },
+          "503": {
+            "description": "Payment service or issuer temporarily unavailable — retry"
           }
         },
         "security": [

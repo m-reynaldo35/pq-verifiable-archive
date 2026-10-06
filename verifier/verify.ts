@@ -26,7 +26,7 @@ async function main() {
     .option('--pdf <path>', 'path to the original document; without it only the bundle is verified')
     .option('--issuer-address <addr>', 'trusted issuer Algorand address')
     .option('--key-reg-txn <txid>', 'trusted issuer key registration txn id (required with --issuer-address)')
-    .option('--pk-sha256 <hex>', 'sha256 of the trusted issuer ML-DSA-65 public key (makes the key check offline)')
+    .option('--pk-sha256 <hex>', 'sha256 of the trusted issuer ML-DSA-65 public key: a strict pin (only this key is accepted, no network needed)')
     .option('--public-key-file <path>', 'hex ML-DSA-65 public key, only needed for legacy bundles without an embedded key')
     .option('--indexer <url>', 'Algorand indexer URL', DEFAULT_INDEXER_URL)
     .parse();

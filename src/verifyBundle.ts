@@ -86,6 +86,9 @@ function validateBundleSchema(b: unknown): string[] {
   if (!isHex32(b.documentHash)) problems.push('documentHash (64 lowercase hex)');
   if (typeof b.envelopeId !== 'string') problems.push('envelopeId');
   if (!Array.isArray(b.merkleProof)) problems.push('merkleProof');
+  // An own "__proto__" key is dropped by some copy idioms (e.g. Object.assign),
+  // which would make verifiers canonicalise differently. Never legitimate.
+  if (Object.keys(b).includes('__proto__')) problems.push('__proto__ key not allowed');
   if (b.blockTimestamp !== undefined && (typeof b.blockTimestamp !== 'string' || Number.isNaN(Date.parse(b.blockTimestamp)))) {
     problems.push('blockTimestamp');
   }
@@ -156,13 +159,16 @@ async function checkKey(
   indexer: Indexer,
 ): Promise<KeyCheck> {
   const fingerprint = sha256hex(publicKey);
-  if (trust.pkSha256 && fingerprint === trust.pkSha256.toLowerCase()) {
-    return { status: 'matched', detail: 'key fingerprint matches the pinned issuer key (offline)' };
+  if (trust.pkSha256) {
+    // A pinned fingerprint is strict: no on-chain lookup can add other keys.
+    return fingerprint === trust.pkSha256.toLowerCase()
+      ? { status: 'matched', detail: 'key fingerprint matches the pinned issuer key (offline)' }
+      : { status: 'mismatched', detail: 'public key is not the pinned key of this issuer' };
   }
 
-  // Not the pinned key (or no fingerprint pinned): the issuer may have rotated
-  // keys. Accept a registration txn named in the bundle only if the trusted
-  // issuer address sent it.
+  // No fingerprint pinned: the issuer may have rotated keys. Accept a
+  // registration txn named in the bundle only if the trusted issuer address
+  // sent it.
   const regTxnId =
     (bundle.protocol === 'pqva/2' ? bundle.keyRegistrationTxnId : bundle.docusignKeyRegistrationTxnId) ||
     trust.keyRegistrationTxnId;
@@ -225,12 +231,16 @@ export async function verifyBundle(
       });
     } else {
       const publicKey = parseHex(keyHex, 'mldsaPublicKey', MLDSA65_PUBLIC_KEY_BYTES);
-      if (bundle.protocol === 'pqva/2' && bundle.issuerAddress !== trust.issuerAddress) {
-        steps.push({
-          name: STEP_SIGNATURE,
-          passed: false,
-          detail: `bundle issuer ${bundle.issuerAddress} is not a trusted issuer`,
-        });
+      const scopeError =
+        bundle.protocol === 'pqva/2' && bundle.issuerAddress !== trust.issuerAddress
+          ? `bundle issuer ${bundle.issuerAddress} is not a trusted issuer`
+          : trust.protocols && !trust.protocols.includes(bundle.protocol)
+            ? `issuer ${trust.issuerAddress} is only trusted for ${trust.protocols.join(', ')} bundles`
+            : trust.maxRound !== undefined && bundle.algorandRound > trust.maxRound
+              ? `issuer ${trust.issuerAddress} is retired; only anchors up to round ${trust.maxRound} are trusted`
+              : null;
+      if (scopeError) {
+        steps.push({ name: STEP_SIGNATURE, passed: false, detail: scopeError });
       } else if (!verifyBundleSignature(bundle, publicKey)) {
         steps.push({ name: STEP_SIGNATURE, passed: false, detail: 'signature mismatch' });
       } else {

@@ -2,6 +2,7 @@ import algosdk from 'algosdk';
 import { ml_dsa65 } from '@noble/post-quantum/ml-dsa.js';
 import { randomBytes } from '@noble/post-quantum/utils.js';
 import { createHash } from 'crypto';
+import { writeFileSync } from 'fs';
 import * as dotenv from 'dotenv';
 dotenv.config();
 
@@ -52,10 +53,15 @@ async function main() {
   console.log('Explorer: https://explorer.perawallet.app/tx/' + txid);
   console.log('PK Hash :', pkHash);
   console.log('');
-  console.log('Add to the issuing service .env (keep the private key secret):');
-  console.log(`PQVA_MLDSA_PUBLIC_KEY="${publicKeyHex}"`);
-  console.log(`PQVA_MLDSA_PRIVATE_KEY="${privateKeyHex}"`);
-  console.log(`PQVA_KEY_REGISTRATION_TXN_ID="${txid}"`);
+  // The private key is written to a file readable only by you, never printed.
+  const secretsPath = `pqva-issuer-keys-${txid.slice(0, 8)}.env`;
+  writeFileSync(
+    secretsPath,
+    `PQVA_MLDSA_PUBLIC_KEY=${publicKeyHex}\nPQVA_MLDSA_PRIVATE_KEY=${privateKeyHex}\nPQVA_KEY_REGISTRATION_TXN_ID=${txid}\n`,
+    { mode: 0o600, flag: 'wx' },
+  );
+  console.log(`Issuer keys written to ${secretsPath} (mode 600). Add them to the issuing service's environment,`);
+  console.log('store a backup in a password manager, then delete the file.');
   console.log('');
   console.log('Give verifiers these trust-anchor values (public):');
   console.log(`PQVA_TRUSTED_ISSUER_ADDRESS="${account.addr.toString()}"`);

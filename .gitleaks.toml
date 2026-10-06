@@ -1,11 +1,12 @@
 [extend]
 useDefault = true
 
-# Algorand / BIP-39 style mnemonics: 25 lowercase words in a quoted string.
+# Algorand / BIP-39 style mnemonics: 24-25 lowercase words, quoted or not,
+# with any whitespace between words (e.g. ALGORAND_MNEMONIC=word word ...).
 [[rules]]
 id = "algorand-mnemonic"
 description = "Algorand 25-word mnemonic"
-regex = '''['"`]([a-z]{3,8} ){24}[a-z]{3,8}['"`]'''
+regex = '''(?:^|[^a-z])((?:[a-z]{3,8}[ \t]+){23,24}[a-z]{3,8})(?:[^a-z]|$)'''
 
 # Public on-chain values pinned as the hosted issuer's trust anchor (an
 # Algorand transaction ID is not a secret).

@@ -11,7 +11,7 @@ All four entry points call `createProofBundle()` in `src/proofBundleAssembler.ts
 
 | Entry point | Auth / metering | Signer source |
 |---|---|---|
-| `POST /api/anchor` (hash only) | x402 payment, rate limit, payment replay guard | `requester-asserted` |
+| `POST /api/anchor` (hash only) | x402 payment settled before anchoring, one anchor per payment txn, rate limit | `requester-asserted` |
 | `POST /api/archive` (PDF upload, operator UI) | `PORTAL_API_KEY`, rate limit | `requester-asserted` |
 | `POST /webhook/docusign` (Connect 2.0) | HMAC-SHA256 over raw body, any `X-DocuSign-Signature-N`; idempotent per envelope | `docusign-connect` |
 | MCP `anchor_document` | local stdio; daily cap `MCP_MAX_ANCHORS_PER_DAY` | `requester-asserted` |
@@ -122,18 +122,30 @@ itself is served by the hosted server, so it is not independent of that server.
   `vercel.json` rewrites every non-static path to it and serves `public/` from
   the CDN with the security headers. `src/server.ts` is the long-running entry
   point for local development (`npm run dev`).
-- Connect a **private** Vercel Blob store. It holds archive records, bundles and
-  PDFs, plus one-time claims for x402 payment headers and DocuSign envelopes, so
-  replay protection and webhook idempotency hold across function instances.
-- `NODE_ENV` is `production` on Vercel. If `PORTAL_API_KEY`,
-  `X402_TREASURY_ADDRESS`, the ML-DSA keys or the Blob store are missing, every
-  request returns 503 and the reason is logged.
-- Webhook processing continues after the 200 response via `waitUntil`
-  (function `maxDuration` 60 s).
+- Connect a **private** Vercel Blob store. It holds archive records (newest
+  first, the list shows the latest 200), bundles and PDFs, plus durable claims
+  for x402 payments and DocuSign envelopes, so payment uniqueness and webhook
+  idempotency hold across function instances.
+- `NODE_ENV` is `production` on Vercel (confirmed: the misconfiguration gate
+  fired there). If `PORTAL_API_KEY`, `X402_TREASURY_ADDRESS`, the ML-DSA keys or
+  the Blob store are missing, every request returns 503 and the reason is
+  logged. Outside production the operator endpoints still refuse to run
+  without `PORTAL_API_KEY` unless `PQVA_ALLOW_OPEN_PORTAL=true`.
+- Before anchoring or taking payment, an issuer self-check confirms that the
+  `ALGORAND_MNEMONIC` address sent `PQVA_KEY_REGISTRATION_TXN_ID` and that the
+  registration records `PQVA_MLDSA_PUBLIC_KEY`.
+- **Payments (`POST /api/anchor`).** Request validation and the issuer check
+  run first, so a client is never charged for a request that cannot succeed.
+  Then: facilitator verify → claim `payments/<payment txn id>` → settle →
+  anchor and sign → mark fulfilled. The claim key is the id of the
+  payer-signed Algorand payment txn, so re-encoding the header cannot reuse a
+  payment, and nothing is stored for payments that fail verification. If
+  anchoring fails after settlement, resending the same request with the same
+  `payment-signature` header (after 30 s) redeems the payment.
+- **Webhook.** Processing happens before the response: success returns 200,
+  failure returns 5xx so DocuSign Connect retries. A delivery that arrives
+  while another is processing gets 503; a processing claim older than 3
+  minutes (function killed) is taken over.
 - Rate limits are in-memory per function instance, so they are best-effort on
   Vercel. Add a Vercel Firewall rate-limit rule for `/api/anchor` and
   `/api/verify` for a global limit.
-- The x402 middleware settles payment after the handler runs. The durable replay
-  guard stops a payment header being used twice, but a payment that ultimately
-  fails to settle still produces one anchor. Settling before anchoring would
-  close this completely.
