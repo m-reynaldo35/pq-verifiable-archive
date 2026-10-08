@@ -31,10 +31,37 @@ function authHost(): string {
   return isSandbox() ? 'account-d.docusign.com' : 'account.docusign.com';
 }
 
-function apiBaseUrl(): string {
-  return isSandbox()
-    ? 'https://demo.docusign.net/restapi'
-    : 'https://www.docusign.net/restapi';
+interface UserInfoResponse {
+  accounts?: Array<{ account_id?: string; base_uri?: string }>;
+}
+
+// Production accounts live on regional hosts (na2, na3, eu, au, …), so the
+// REST base must come from the account's base_uri, never a fixed host.
+export function apiBaseFromUserInfo(info: UserInfoResponse, accountId: string): string {
+  const account = (info.accounts ?? []).find(a => a.account_id === accountId);
+  if (!account?.base_uri) throw new Error(`DocuSign account ${accountId} not found for this user`);
+  const base = new URL(account.base_uri);
+  if (base.protocol !== 'https:' || !/(^|\.)docusign\.net$/.test(base.hostname)) {
+    throw new Error(`unexpected DocuSign base_uri: ${account.base_uri}`);
+  }
+  return `${base.origin}/restapi`;
+}
+
+let cachedApiBase: string | null = null;
+
+async function apiBaseUrl(): Promise<string> {
+  if (cachedApiBase) return cachedApiBase;
+  const override = process.env.DOCUSIGN_BASE_URI;
+  if (override) {
+    cachedApiBase = `${override.replace(/\/+$/, '')}/restapi`;
+  } else if (isSandbox()) {
+    cachedApiBase = 'https://demo.docusign.net/restapi';
+  } else {
+    const res = await fetch(`https://${authHost()}/oauth/userinfo`, { headers: await authHeaders() });
+    if (!res.ok) throw new Error(`DocuSign userinfo request failed: ${res.status} ${res.statusText}`);
+    cachedApiBase = apiBaseFromUserInfo((await res.json()) as UserInfoResponse, requireEnv('DOCUSIGN_ACCOUNT_ID'));
+  }
+  return cachedApiBase;
 }
 
 function requireEnv(name: string): string {
@@ -108,7 +135,9 @@ async function authHeaders(): Promise<Record<string, string>> {
 
 export async function downloadEnvelopePdf(envelopeId: string): Promise<Buffer> {
   const accountId = requireEnv('DOCUSIGN_ACCOUNT_ID');
-  const url = `${apiBaseUrl()}/v2.1/accounts/${accountId}/envelopes/${envelopeId}/documents/combined`;
+  // certificate=true: the hashed PDF always includes the certificate of
+  // completion, independent of the account's default.
+  const url = `${await apiBaseUrl()}/v2.1/accounts/${accountId}/envelopes/${envelopeId}/documents/combined?certificate=true`;
   const res = await fetch(url, {
     headers: { ...(await authHeaders()), Accept: 'application/pdf' },
   });
@@ -122,7 +151,7 @@ export async function downloadEnvelopePdf(envelopeId: string): Promise<Buffer> {
 
 export async function getSignerMetadata(envelopeId: string): Promise<SignerMetadata[]> {
   const accountId = requireEnv('DOCUSIGN_ACCOUNT_ID');
-  const url = `${apiBaseUrl()}/v2.1/accounts/${accountId}/envelopes/${envelopeId}/recipients`;
+  const url = `${await apiBaseUrl()}/v2.1/accounts/${accountId}/envelopes/${envelopeId}/recipients`;
   const res = await fetch(url, {
     headers: { ...(await authHeaders()), Accept: 'application/json' },
   });
