@@ -13,7 +13,7 @@ import type { Signer } from './bundleSigner.js';
 import { verifyBundle, VerifyOptions } from './verifyBundle.js';
 import { hashDocument } from './documentHasher.js';
 import { createProofBundle } from './proofBundleAssembler.js';
-import { requireAnchorPayment, markPaymentFulfilled } from './anchorPaywall.js';
+import { requireAnchorPayment, markPaymentFulfilled, x402DiscoveryDocument } from './anchorPaywall.js';
 import { issuerStatus } from './issuerCheck.js';
 import { validateSigners, validateEnvelopeId } from './signers.js';
 import { isProduction, trustAnchorFromEnv } from './config.js';
@@ -148,6 +148,11 @@ app.use(express.static(path.join(process.cwd(), 'public')));
 
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok', storage: storageKind(), timestamp: new Date().toISOString() });
+});
+
+app.get('/.well-known/x402', (_req, res) => {
+  res.setHeader('Cache-Control', 'public, max-age=3600');
+  res.json(x402DiscoveryDocument());
 });
 
 app.get('/demo/bundle', (_req, res) => res.sendFile(path.resolve('bundles/sample-contract-bundle.json')));

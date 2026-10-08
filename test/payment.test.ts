@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import algosdk from 'algosdk';
-import { canonicalPaymentId } from '../src/anchorPaywall.js';
+import { canonicalPaymentId, x402DiscoveryDocument } from '../src/anchorPaywall.js';
 
 function signedPayment(): { b64: string; txid: string } {
   const acct = algosdk.generateAccount();
@@ -35,4 +35,11 @@ test('malformed payment payloads have no id', () => {
   assert.equal(canonicalPaymentId({ payload: {} }), null);
   assert.equal(canonicalPaymentId({ payload: { paymentGroup: ['garbage'], paymentIndex: 0 } }), null);
   assert.equal(canonicalPaymentId({ payload: { paymentGroup: [], paymentIndex: 3 } }), null);
+});
+
+test('x402 discovery document lists the paid anchor endpoint', () => {
+  const doc = x402DiscoveryDocument();
+  assert.equal(doc.version, 1);
+  assert.equal(doc.resources.length, 1);
+  assert.match(doc.resources[0], /^https:\/\/.+\/api\/anchor$/);
 });
