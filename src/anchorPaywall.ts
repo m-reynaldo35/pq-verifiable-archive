@@ -87,6 +87,19 @@ const merchantExtension = {
   },
 };
 
+// Served at GET /.well-known/x402 so crawlers can find the paid resources
+// without first having to trigger a 402 (the x402scan discovery format).
+export function x402DiscoveryDocument(): { version: 1; resources: string[]; instructions: string } {
+  return {
+    version: 1,
+    resources: [`${PUBLIC_URL}/api/anchor`],
+    instructions:
+      'POST /api/anchor with JSON {"hash": "<sha256 hex>"} and an x402 payment (USDC on Algorand mainnet) to anchor a ' +
+      'document hash and receive an ML-DSA-65 signed proof bundle. Verify free at POST /api/verify. ' +
+      `API description: ${PUBLIC_URL}/openapi.json`,
+  };
+}
+
 // Canonical identity of a payment: the txn id of the payer-signed payment txn.
 // Unlike the raw header, it cannot be changed by re-encoding the base64 or
 // re-serialising the JSON, so one payment can be used for one anchor only.
