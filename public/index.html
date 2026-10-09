@@ -173,6 +173,8 @@
   }
   .signer .sname { font-weight: 600; }
   .signer .smeta { color: var(--muted); font-size: 12px; }
+  .signer .clabel { color: var(--text); }
+  .signer .cnote { margin-top: 6px; }
   .banner {
     margin-top: 32px;
     border-radius: 8px;
@@ -473,6 +475,7 @@
         <div class="section-title" id="signersTitle">Signers</div>
         <div id="signers"></div>
       </div>
+      <div id="capture" style="display:none"></div>
       <div class="banner" id="banner"></div>
     </div>
   </section>
@@ -1015,6 +1018,7 @@
       '<div class="drawer">' +
         '<div class="section-title" style="margin-top:0;">Verification Steps</div>' +
         '<div class="dsteps"></div>' +
+        '<div class="dcapture" style="display:none"></div>' +
         '<div class="dbanner banner"></div>' +
         '<div class="section-title">Test tamper detection</div>' +
         '<label class="zone tamper-zone">' +
@@ -1030,6 +1034,7 @@
       '</div>';
 
     renderSteps(data.steps || [], cell.querySelector('.dsteps'));
+    renderCapture(data, cell.querySelector('.dcapture'));
     renderBanner(data, cell.querySelector('.dbanner'));
 
     const tamperZone = cell.querySelector('.tamper-zone');
@@ -1254,6 +1259,13 @@
     return bytesToHex(await sha256Bytes(new TextEncoder().encode(json)));
   }
 
+  // Same check as isCapture in src/verifyBundle.ts.
+  function isCaptureClient(c) {
+    const isTime = v => typeof v === 'string' && !isNaN(Date.parse(v));
+    return Boolean(c) && typeof c === 'object' && !Array.isArray(c) &&
+      c.source === 'docusign-envelope-combined' && isTime(c.envelopeCompletedAt) && isTime(c.capturedAt);
+  }
+
   function validateBundleSchemaClient(b) {
     if (!b || typeof b !== 'object' || Array.isArray(b)) return ['bundle is not a JSON object'];
     const p = [];
@@ -1274,6 +1286,7 @@
       if (typeof b.keyRegistrationTxnId !== 'string') p.push('keyRegistrationTxnId');
       if (!Array.isArray(b.signers)) p.push('signers');
       if (b.signerSource !== 'docusign-connect' && b.signerSource !== 'requester-asserted') p.push('signerSource');
+      if (b.capture !== undefined && !isCaptureClient(b.capture)) p.push('capture');
     }
     return p;
   }
@@ -1443,7 +1456,8 @@
     const blocking = steps.filter(s => !s.informational);
     const valid = blocking.every(s => s.passed);
     const operationalError = !valid && blocking.filter(s => !s.passed).every(s => s.error);
-    return { valid, steps, signers, signerSource, documentChecked: Boolean(pdfBytes), anchoredAt, operationalError };
+    const capture = bundle.protocol === 'pqva/2' && bundle.capture ? bundle.capture : undefined;
+    return { valid, steps, signers, signerSource, capture, documentChecked: Boolean(pdfBytes), anchoredAt, operationalError };
   }
 
   verifyBtn.addEventListener('click', async () => {
@@ -1475,6 +1489,7 @@
         ? 'Signers (reported by DocuSign to the issuer)'
         : 'Signers (asserted by the requester — not verified)';
       renderSigners(sg, signersEl);
+      renderCapture(data, document.getElementById('capture'));
       renderBanner(data, banner);
       results.style.display = 'block';
     } catch (err) {
