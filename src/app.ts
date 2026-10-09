@@ -377,7 +377,7 @@ function noStore(_req: express.Request, res: express.Response, next: express.Nex
   res.setHeader('X-Robots-Tag', 'noindex, nofollow');
   next();
 }
-const shared = [verifyLimiter, noStore];
+const shared: express.RequestHandler[] = [verifyLimiter, noStore];
 const sharedRecord = (req: express.Request) => () => resolveShareToken(String(req.params.token));
 
 app.get('/d/:token', shared, (_req, res) => res.sendFile(path.join(process.cwd(), 'public', 'share.html')));
