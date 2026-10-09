@@ -1,7 +1,7 @@
 import 'dotenv/config';
 // Polyfill globalThis.crypto for Node.js environments where it isn't auto-set.
 // Required by @noble/hashes (used by @noble/post-quantum for ML-DSA signing).
-import { webcrypto, createHash, timingSafeEqual } from 'node:crypto';
+import { webcrypto, createHash, timingSafeEqual, randomUUID } from 'node:crypto';
 if (!globalThis.crypto) (globalThis as unknown as { crypto: unknown }).crypto = webcrypto;
 import express from 'express';
 import multer from 'multer';
@@ -17,6 +17,20 @@ import { requireAnchorPayment, markPaymentFulfilled, x402DiscoveryDocument } fro
 import { issuerStatus } from './issuerCheck.js';
 import { validateSigners, validateEnvelopeId } from './signers.js';
 import { isProduction, trustAnchorFromEnv } from './config.js';
+import { createEmbeddedEnvelope, createRecipientView, getEnvelopeCompletion } from './docusignClient.js';
+import {
+  demoEnabled,
+  takeDailySlot,
+  newDemoToken,
+  saveDemoSession,
+  loadDemoSession,
+  demoStatus,
+  validateDemoName,
+  placeholderEmail,
+  demoContractHtml,
+  DEMO_SIGN_ANCHOR,
+  DemoSession,
+} from './demo.js';
 import {
   listRecords,
   getRecord,
@@ -404,6 +418,153 @@ app.get('/api/shared/:token/pdf', verifyLimiter, noStore, (req, res) =>
 );
 
 app.post('/api/shared/:token/verify', verifyLimiter, noStore, (req, res) => verifyArchived(res, sharedRecord(req)));
+
+// ---------------------------------------------------------------------------
+// Public "Try it" demo (src/demo.ts): free to visitors, so off unless
+// PQVA_DEMO_ENABLED=true, capped per UTC day across instances, and limited to
+// a fixed demo contract (visitors cannot send their own documents).
+// ---------------------------------------------------------------------------
+const PUBLIC_URL = (process.env.PQVA_PUBLIC_URL ?? 'https://pq-verifiable-archive.vercel.app').replace(/\/+$/, '');
+// The session token stays in the visitor's browser storage, never in a URL,
+// so it does not reach DocuSign or request logs. DocuSign appends ?event=….
+const DEMO_RETURN_URL = `${PUBLIC_URL}/try`;
+const tryLimiter = limiter(3, 'too many demo requests — try again in a minute');
+const QUOTA_USED = "today's free demo quota is used up — try again tomorrow (UTC), or verify the live example";
+
+function requireDemo(_req: express.Request, res: express.Response, next: express.NextFunction): void {
+  if (!demoEnabled()) {
+    res.status(404).json({ error: 'the demo is not enabled on this server' });
+    return;
+  }
+  next();
+}
+
+// Optional public example: the signer link of a showcase envelope, set by the
+// operator. Only a well-formed /d/<token> path is ever served.
+function showcaseLink(): string | null {
+  const link = process.env.PQVA_SHOWCASE_LINK ?? '';
+  return /^\/d\/[A-Za-z0-9_-]{43}$/.test(link) ? link : null;
+}
+
+const sessionToken = (req: express.Request): string => String((req.body as { session?: unknown } | undefined)?.session ?? '');
+
+app.get('/try', (_req, res) => res.sendFile(path.join(process.cwd(), 'public', 'try.html')));
+
+app.get('/api/try/config', noStore, (_req, res) => {
+  res.json({ enabled: demoEnabled(), showcase: showcaseLink() });
+});
+
+// Start a demo: create an embedded-signing envelope for the visitor and return
+// the DocuSign signing URL plus the session token for the status page.
+app.post('/api/try/sign', tryLimiter, noStore, requireDemo, express.json({ limit: '4kb' }), requireIssuerReady, async (req, res) => {
+  const name = validateDemoName((req.body as { name?: unknown } | undefined)?.name);
+  if (!name) {
+    res.status(400).json({ error: 'enter a name of 1-60 letters, digits, spaces or simple punctuation' });
+    return;
+  }
+  try {
+    if (!(await takeDailySlot('envelope'))) {
+      res.status(429).json({ error: QUOTA_USED });
+      return;
+    }
+    const signer = { name, email: placeholderEmail(), clientUserId: randomUUID() };
+    const envelopeId = await createEmbeddedEnvelope({
+      signer,
+      emailSubject: 'PQ Verifiable Archive demo agreement',
+      documentName: 'pqva-demo-agreement',
+      documentHtml: demoContractHtml(name, new Date()),
+      anchor: DEMO_SIGN_ANCHOR,
+    });
+    const token = newDemoToken();
+    const session: DemoSession = {
+      envelopeId,
+      clientUserId: signer.clientUserId,
+      signerName: signer.name,
+      signerEmail: signer.email,
+      createdAt: new Date().toISOString(),
+    };
+    await saveDemoSession(token, session);
+    const signingUrl = await createRecipientView(envelopeId, signer, DEMO_RETURN_URL);
+    console.log(JSON.stringify({ event: 'demo-envelope', envelopeId, timestamp: session.createdAt }));
+    res.json({ session: token, signingUrl });
+  } catch (e) {
+    console.error(`demo envelope failed: ${(e as Error).message}`);
+    res.status(502).json({ error: 'could not start the DocuSign demo — try again shortly' });
+  }
+});
+
+// Reopen signing for an unfinished demo (the visitor chose "finish later",
+// or the session timed out). Signing URLs are single-use, so mint a new one.
+app.post('/api/try/resume', tryLimiter, noStore, requireDemo, express.json({ limit: '4kb' }), async (req, res) => {
+  try {
+    const session = await loadDemoSession(sessionToken(req));
+    if (!session) {
+      res.status(404).json({ error: 'demo session not found' });
+      return;
+    }
+    const status = await demoStatus(session);
+    if (status.state === 'done') {
+      res.json(status);
+      return;
+    }
+    const completion = await getEnvelopeCompletion(session.envelopeId);
+    if (completion.status === 'completed') {
+      res.json({ state: 'waiting' });
+      return;
+    }
+    if (completion.status !== 'sent' && completion.status !== 'delivered') {
+      res.status(409).json({ error: `this demo envelope is ${completion.status} — start a new one` });
+      return;
+    }
+    const signer = { name: session.signerName, email: session.signerEmail, clientUserId: session.clientUserId };
+    const signingUrl = await createRecipientView(session.envelopeId, signer, DEMO_RETURN_URL);
+    res.json({ state: 'signing', signingUrl });
+  } catch (e) {
+    console.error(`demo resume failed: ${(e as Error).message}`);
+    res.status(502).json({ error: 'could not reopen signing — try again shortly' });
+  }
+});
+
+app.post('/api/try/status', verifyLimiter, noStore, requireDemo, express.json({ limit: '4kb' }), async (req, res) => {
+  try {
+    const session = await loadDemoSession(sessionToken(req));
+    if (!session) {
+      res.status(404).json({ error: 'demo session not found' });
+      return;
+    }
+    res.json(await demoStatus(session));
+  } catch (e) {
+    console.error(`demo status failed: ${(e as Error).message}`);
+    res.status(500).json({ error: 'could not load demo status' });
+  }
+});
+
+// Free hash-only anchoring for the demo. The browser hashes the file locally;
+// only the hash is sent and nothing is stored. Same bundle as /api/anchor.
+app.post('/api/try/anchor', anchorLimiter, noStore, requireDemo, express.json({ limit: '4kb' }), requireIssuerReady, async (req, res) => {
+  const hash = (req.body as { hash?: unknown } | undefined)?.hash;
+  if (typeof hash !== 'string' || !/^[0-9a-f]{64}$/.test(hash)) {
+    res.status(400).json({ error: 'hash must be a 64-character lowercase hex SHA-256 string' });
+    return;
+  }
+  try {
+    if (!(await takeDailySlot('anchor'))) {
+      res.status(429).json({ error: QUOTA_USED });
+      return;
+    }
+    const bundle = await createProofBundle({
+      documentHash: hash,
+      envelopeId: `demo-${Date.now()}`,
+      signers: [],
+      signerSource: 'requester-asserted',
+    });
+    console.log(JSON.stringify({ event: 'demo-anchor', algorandTxnId: bundle.algorandTxnId, round: bundle.algorandRound }));
+    res.json({ success: true, algorandTxnId: bundle.algorandTxnId, algorandRound: bundle.algorandRound, bundle });
+  } catch (e) {
+    console.error(`demo anchor failed: ${(e as Error).message}`);
+    res.status(500).json({ error: 'anchor failed due to an internal error' });
+  }
+});
 
 // POST /api/anchor — agent-friendly JSON endpoint for hash anchoring.
 // Accepts { hash, envelope_id?, signers? }, returns a proof bundle.

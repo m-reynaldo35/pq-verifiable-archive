@@ -8,11 +8,15 @@ Works with any signing tool: DocuSign, HelloSign, Adobe Sign, or a plain PDF. Yo
 
 ## Try it in 2 minutes
 
+**With DocuSign:** open **https://pq-verifiable-archive.vercel.app/try**, sign a demo contract (DocuSign sandbox, embedded signing, no email or account needed), and about 30 seconds later you get your archived copy, its proof bundle and a one-click verifier. The same page anchors the hash of any file for free.
+
+**Verify only:**
+
 1. Open **https://pq-verifiable-archive.vercel.app** → **Verify Independently** → **Load sample bundle & PDF**, then **Verify**. Everything runs in your browser against the public Algorand indexer; the PDF is never uploaded.
 2. Change one character of the demo PDF (or use any other PDF) with the same bundle: the result flips to **INVALID** on the document-hash check.
 3. Prefer a terminal? `git clone` this repo, `npm install`, then `npm run verify -- --bundle bundles/sample-contract-bundle.json --pdf assets/sample-contract.pdf`.
 
-Anchoring a new document costs $0.01 USDC via x402 (`POST /api/anchor`, see below). Verifying is always free.
+Anchoring through the API costs $0.01 USDC via x402 (`POST /api/anchor`, see below); the `/try` demo is free within a daily cap. Verifying is always free.
 
 ## Why this exists
 
@@ -30,6 +34,52 @@ Today's e-signature platforms use RSA or ECDSA. Both are broken by a large-enoug
 | Standards | RSA / ECDSA | NIST FIPS-204, SHA-256, JCS (RFC 8785), RFC 6962-style Merkle tree |
 
 **What the verifier does not do yet:** it does not verify Algorand's Falcon-512 state proofs. It trusts the indexer's report of the anchor transaction (after checking sender, round and note) and only reports state-proof coverage as information.
+
+## DocuSign
+
+### What it adds
+DocuSign's own evidence (the certificate of completion and the PDF seal) is RSA-signed and checked through DocuSign or a PDF trust chain. This adds an independent record of the exact completed document: a SHA-256 hash anchored on a public ledger, inside a receipt signed with ML-DSA-65. Anyone can check it, now or in 2040, without DocuSign or this service.
+
+### How it works
+1. An envelope is completed. **DocuSign Connect** posts `envelope-completed` to `/webhook/docusign` (JSON, SIM, HMAC-signed).
+2. The webhook checks the HMAC, then asks the eSignature REST API for the envelope's status and only continues if it is `completed`.
+3. It downloads the combined PDF **with the certificate of completion** (`documents/combined?certificate=true`) and the recipients, then hashes the PDF.
+4. The hash goes into a Merkle tree anchored in an Algorand transaction. The proof bundle (`pqva/2`) is signed with ML-DSA-65 and records the signers as `docusign-connect` plus a signed `capture` record (DocuSign's completion time and the archive time).
+5. The PDF and bundle are archived, and the signer gets a private link (`/d/<token>`) to download both and verify.
+
+Each delivery is idempotent (one claim per envelope across instances), a failure returns 5xx so Connect retries, and a document is never anchored twice.
+
+### DocuSign regenerates PDFs on every download
+Two downloads of the same completed envelope have **different SHA-256 hashes**: DocuSign rewrites the XMP dates, the PDF `/ID` and its `adbe.pkcs` seal each time. A proof over "the envelope" can therefore never be checked against a later download. The design answer: **the archived copy is the document of record**. The archive captures it once, seconds after completion; the signer link hands out those exact bytes; and the signed `capture` record shows when DocuSign completed the envelope and when the copy was taken. (Normalising the PDF before hashing was rejected: it widens what the proof does not cover and every future verifier would have to reproduce the normalisation.)
+
+### What the proof shows, and what it does not
+- **Shows:** this exact file existed no later than the anchor's ledger time; the trusted issuer signed a receipt for it with a post-quantum signature; the signer list and capture times are what DocuSign reported to the issuer.
+- **Does not show:** who signed. Signer identity still rests on DocuSign's own records and audit trail. The capture times are reported by DocuSign and the issuer; only the ledger time is independent.
+- **Not yet post-quantum end to end:** the Algorand transaction itself is Ed25519-signed. Algorand's state proofs (Falcon, post-quantum) attest the ledger history, but the verifier only reports them and does not check them yet.
+- **On-chain:** hashes only. Envelope ids are hashed too. Names and emails appear only in the archived PDF and bundle, behind the private link.
+
+### Why not just…
+- **…an RFC 3161 timestamp?** A good complement, but the timestamp authority signs with RSA or ECDSA (quantum-exposed) and the proof is only as good as that authority's certificate chain staying trusted. Here the issuer signature is ML-DSA-65, and the anchor is on a public ledger that anyone can query with no certificate authority.
+- **…DocuSign's certificate of completion?** It is included in the hashed PDF. On its own it is RSA-sealed, verified through DocuSign or a PDF trust chain, and regenerated on every download.
+- **…Algorand?** About 0.001 ALGO per anchor (a fraction of a cent), ~3 s finality with no forks, and Falcon-based state proofs give a post-quantum path for the ledger history.
+
+### Numbers from the live sandbox tests (2026-10-09)
+| | |
+|---|---|
+| Envelope completed → anchored on mainnet | 24–26 s (two envelopes) |
+| Connect delivery failures | 0 |
+| Cost per anchor | one Algorand transaction, 0.001 ALGO |
+| Verification | free: browser, CLI or `POST /api/verify` |
+
+### Run it against your own DocuSign developer account
+1. **Self-host** this repo (see below) with your own Algorand wallet and ML-DSA key (`npm run generate-wallet`, `npm run register-key`).
+2. **Apps and Keys** in the DocuSign developer console: create an integration key, generate an RSA key pair, and add a redirect URI (any, e.g. `https://localhost`) for the one-time consent.
+3. **Grant consent** once for JWT impersonation: open `https://account-d.docusign.com/oauth/auth?response_type=code&scope=signature%20impersonation&client_id=<INTEGRATION_KEY>&redirect_uri=<REDIRECT_URI>` and accept.
+4. **Connect**: Settings → Connect → Add configuration → Custom. URL: `https://<your-host>/webhook/docusign`; data format **REST v2.1 / JSON (SIM)**; event **Envelope Signed/Completed**; tick **Include HMAC signature** and create an HMAC key under Connect Keys; enable for all users.
+5. **Environment**: `DOCUSIGN_SANDBOX=true`, `DOCUSIGN_INTEGRATION_KEY`, `DOCUSIGN_USER_ID` (your API user id), `DOCUSIGN_ACCOUNT_ID` (API account id), `DOCUSIGN_PRIVATE_KEY` (the RSA private key PEM, base64-encoded) and `DOCUSIGN_HMAC_KEY`.
+6. Send yourself an envelope and sign it. The function log shows one line per delivery, `[webhook] event=envelope-completed envelope=… outcome=anchored`, and the record appears under **Archived Documents** with a **Signer link** button.
+
+Production accounts work the same with `DOCUSIGN_SANDBOX=false`; the regional REST host is read from the account's `base_uri`. To enable the `/try` demo on your instance, see `PQVA_DEMO_*` in `.env.example`.
 
 ## Use as an MCP tool (AI agents)
 
