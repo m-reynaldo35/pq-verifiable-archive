@@ -377,12 +377,11 @@ function noStore(_req: express.Request, res: express.Response, next: express.Nex
   res.setHeader('X-Robots-Tag', 'noindex, nofollow');
   next();
 }
-const shared: express.RequestHandler[] = [verifyLimiter, noStore];
 const sharedRecord = (req: express.Request) => () => resolveShareToken(String(req.params.token));
 
-app.get('/d/:token', shared, (_req, res) => res.sendFile(path.join(process.cwd(), 'public', 'share.html')));
+app.get('/d/:token', verifyLimiter, noStore, (_req, res) => res.sendFile(path.join(process.cwd(), 'public', 'share.html')));
 
-app.get('/api/shared/:token', shared, async (req, res) => {
+app.get('/api/shared/:token', verifyLimiter, noStore, async (req, res) => {
   try {
     const record = await sharedRecord(req)();
     if (!record) {
@@ -396,15 +395,15 @@ app.get('/api/shared/:token', shared, async (req, res) => {
   }
 });
 
-app.get('/api/shared/:token/bundle', shared, (req, res) =>
+app.get('/api/shared/:token/bundle', verifyLimiter, noStore, (req, res) =>
   sendArchived(res, sharedRecord(req), readBundle, r => `${r.title}-bundle.json`, 'application/json'),
 );
 
-app.get('/api/shared/:token/pdf', shared, (req, res) =>
+app.get('/api/shared/:token/pdf', verifyLimiter, noStore, (req, res) =>
   sendArchived(res, sharedRecord(req), readPdf, r => r.filename, 'application/pdf'),
 );
 
-app.post('/api/shared/:token/verify', shared, (req, res) => verifyArchived(res, sharedRecord(req)));
+app.post('/api/shared/:token/verify', verifyLimiter, noStore, (req, res) => verifyArchived(res, sharedRecord(req)));
 
 // POST /api/anchor — agent-friendly JSON endpoint for hash anchoring.
 // Accepts { hash, envelope_id?, signers? }, returns a proof bundle.
