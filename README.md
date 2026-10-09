@@ -64,11 +64,12 @@ Two downloads of the same completed envelope have **different SHA-256 hashes**: 
 - **…Algorand?** About 0.001 ALGO per anchor (a fraction of a cent), ~3 s finality with no forks, and Falcon-based state proofs give a post-quantum path for the ledger history.
 
 ### Numbers from the live sandbox tests (2026-10-09)
+A completed demo envelope is public: open the **Live example** on [/try](https://pq-verifiable-archive.vercel.app/try), download the PDF and bundle, and verify them yourself.
 Full write-up of each run, with the checks, attacks and on-chain transactions: [docs/live-tests.md](docs/live-tests.md).
 
 | | |
 |---|---|
-| Envelope completed → anchored on mainnet | 24–26 s (two envelopes) |
+| Envelope completed → anchored on mainnet | 23–26 s (three envelopes, one signed by a visitor through `/try`) |
 | Connect delivery failures | 0 |
 | Cost per anchor | one Algorand transaction, 0.001 ALGO |
 | Verification | free: browser, CLI or `POST /api/verify` |
