@@ -126,8 +126,14 @@ webhookRouter.post('/docusign', async (req: Request, res: Response): Promise<voi
     return;
   }
 
+  const event = String(body.event ?? body.status ?? 'unknown').replace(/[^\w.-]/g, '').slice(0, 64);
+  // One line per delivery, no signer data: enough to debug Connect setup.
+  const log = (outcome: string) =>
+    process.stdout.write(`[webhook] event=${event} envelope=${extractEnvelopeId(body) ?? '-'} outcome=${outcome}\n`);
+
   if (!isCompleted(body)) {
-    res.status(200).json({ received: true, ignored: body.event ?? body.status ?? 'unknown' });
+    log('ignored');
+    res.status(200).json({ received: true, ignored: event });
     return;
   }
 
@@ -144,11 +150,13 @@ webhookRouter.post('/docusign', async (req: Request, res: Response): Promise<voi
     if (!claim.fresh) {
       const current = claim.current;
       if (current?.state === 'done') {
+        log('duplicate');
         res.status(200).json({ received: true, envelopeId, duplicate: true });
         return;
       }
       if (current && Date.now() - current.at < STALE_MS) {
         // Another delivery is processing it right now; ask DocuSign to retry.
+        log('in-progress');
         res.status(503).json({ error: 'envelope is being processed' });
         return;
       }
@@ -163,9 +171,11 @@ webhookRouter.post('/docusign', async (req: Request, res: Response): Promise<voi
   try {
     await processEnvelope(envelopeId, canonicalId, body.testPdfBase64);
     await setClaim(key, 'done');
+    log('anchored');
     res.status(200).json({ received: true, envelopeId });
   } catch (e) {
     process.stderr.write(`[webhook] failed to process envelope ${envelopeId}: ${(e as Error).message}\n`);
+    log('failed');
     await releaseClaim(key).catch(() => undefined);
     // A 5xx makes DocuSign Connect retry the delivery.
     res.status(500).json({ error: 'processing failed — will be retried' });
