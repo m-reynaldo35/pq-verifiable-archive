@@ -5,7 +5,7 @@
   "functions": {
     "api/index.ts": {
       "maxDuration": 60,
-      "includeFiles": "{bundles/sample-contract-bundle.json,assets/sample-contract.pdf}"
+      "includeFiles": "{bundles/sample-contract-bundle.json,assets/sample-contract.pdf,public/share.html}"
     }
   },
   "rewrites": [

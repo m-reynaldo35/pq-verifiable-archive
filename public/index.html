@@ -934,6 +934,7 @@
           '<button class="sm" data-verify="' + esc(r.id) + '">Verify</button>' +
           '<a href="#" data-download="/api/documents/' + esc(encodeURIComponent(r.id)) + '/bundle" data-filename="' + esc(r.title) + '-bundle.json">Bundle ↓</a>' +
           '<a href="#" data-download="/api/documents/' + esc(encodeURIComponent(r.id)) + '/pdf" data-filename="' + esc(r.filename) + '">PDF ↓</a>' +
+          (r.id === 'sample-contract' ? '' : '<button class="sm" data-share="' + esc(r.id) + '">Signer link</button>') +
         '</div></td></tr>' +
         '<tr class="drawer-row" data-drawer="' + esc(r.id) + '" style="display:none">' +
           '<td class="drawer-cell" colspan="5"></td></tr>';
@@ -944,10 +945,43 @@
     docsContent.querySelectorAll('[data-verify]').forEach(btn =>
       btn.addEventListener('click', () => toggleDrawer(btn.dataset.verify)));
 
+    const byId = new Map(records.map(r => [r.id, r]));
+    docsContent.querySelectorAll('[data-share]').forEach(btn =>
+      btn.addEventListener('click', () => copySignerLink(byId.get(btn.dataset.share), btn)));
+
     if (newlyArchivedId) {
       const row = docsContent.querySelector('tr.doc-row[data-id="' + cssEscape(newlyArchivedId) + '"]');
       if (row) { row.classList.add('highlight'); row.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
       newlyArchivedId = null;
+    }
+  }
+
+  // Signer link: the archived copy is the document of record, so signers get
+  // it (and its proof) from /d/<token>. Existing links are reused; the API
+  // issues one for records that have none.
+  async function copySignerLink(record, btn) {
+    if (!record) return;
+    const label = btn.textContent;
+    btn.disabled = true;
+    try {
+      let path = record.shareToken ? '/d/' + record.shareToken : null;
+      if (!path) {
+        const res = await authFetch('/api/documents/' + encodeURIComponent(record.id) + '/share', { method: 'POST' });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        path = (await res.json()).path;
+        record.shareToken = path.split('/').pop();
+      }
+      const url = location.origin + path;
+      try {
+        await navigator.clipboard.writeText(url);
+        btn.textContent = 'Link copied ✓';
+      } catch {
+        window.prompt('Signer link (copy it):', url);
+      }
+    } catch (e) {
+      btn.textContent = 'Failed: ' + e.message;
+    } finally {
+      setTimeout(() => { btn.textContent = label; btn.disabled = false; }, 2000);
     }
   }
 

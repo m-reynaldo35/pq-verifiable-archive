@@ -79,3 +79,43 @@ test('record ids sort newest first and stay within the id format', async () => {
     Date.now = realNow;
   }
 });
+
+test('signer links resolve, rotate (revoking the old link) and never expose the token', async () => {
+  const store = await import('../src/archiveStore.js');
+  const id = store.newRecordId('shared');
+  const token = store.newShareToken();
+  await store.saveRecord(
+    {
+      id,
+      envelopeId: 'env-shared',
+      title: 'shared',
+      filename: 'shared.pdf',
+      documentHash: 'b'.repeat(64),
+      signers: [],
+      signerSource: 'docusign-connect',
+      txId: 'T'.repeat(52),
+      round: 1,
+      stateProofRound: 256,
+      archivedAt: new Date().toISOString(),
+      shareToken: token,
+    },
+    '{"protocol":"pqva/2"}',
+    Buffer.from('%PDF'),
+  );
+  await store.indexShareToken(id, token);
+  assert.match(token, /^[A-Za-z0-9_-]{43}$/);
+  assert.equal((await store.resolveShareToken(token))?.id, id);
+
+  const rotated = await store.rotateShareToken(id);
+  assert.ok(rotated && rotated !== token);
+  assert.equal(await store.resolveShareToken(token), undefined);
+  assert.equal((await store.resolveShareToken(rotated))?.id, id);
+
+  assert.equal(await store.resolveShareToken('not-a-token'), undefined);
+  assert.equal(await store.resolveShareToken('../../records/x'), undefined);
+  assert.equal(await store.rotateShareToken('sample-contract'), undefined);
+
+  const view = store.sharedView((await store.getRecord(id))!);
+  assert.equal('shareToken' in view, false);
+  assert.equal('id' in view, false);
+});

@@ -224,6 +224,15 @@ VALID — document integrity proven as of 2026-06-11T09:00:00Z
 
 **Acceptance:** `npm run e2e` sends envelope → webhook fires → bundle generated → verifier VALID.
 
+### 4.3 — Live sandbox test and document of record (2026-10-09)
+- [x] Live test: sandbox envelope completed → Connect delivered (0 failures) → anchored on mainnet (txn `ZL4Y7DIE…`, round 65814693) about 26 s later
+- [x] Finding: DocuSign regenerates PDFs on every download (metadata, `/ID`, seal), so only the captured copy matches the proof
+- [x] Archived copy is the document of record; signed `capture` provenance in the bundle (completion time from DocuSign's API, capture time)
+- [x] Webhook confirms `completed` status via the envelope API before anchoring
+- [x] Signer links `/d/<token>`: download PDF + bundle, server-side verify, pointers to the independent verifiers
+- [ ] Deliver signer links automatically (email provider, or a follow-up DocuSign envelope)
+- [ ] Show `capture` provenance in the in-browser and CLI verifiers
+
 ---
 
 ## Phase 5 — Pitch Materials

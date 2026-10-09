@@ -66,9 +66,34 @@ except `signature`.
 | `keyRegistrationTxnId` | string | Issuer's `key-register` txn for this key |
 | `signers[]` | object[] | `name`, `email`, `signedAt` |
 | `signerSource` | string | `docusign-connect` or `requester-asserted` |
+| `capture` | object (optional) | DocuSign provenance: `source` (`docusign-envelope-combined`), `envelopeCompletedAt` (from DocuSign's envelope API), `capturedAt` (when the issuer downloaded the PDF) |
 | `algorithm` | string | `"ml-dsa-65"` |
 | `mldsaPublicKey` | hex | Issuer public key (1952 bytes) |
 | `signature` | hex | ML-DSA-65 signature |
+
+### The archived copy is the document of record
+
+DocuSign rebuilds its PDFs on every download: the XMP `ModifyDate`/`MetadataDate`,
+the PDF `/ID` and DocuSign's own `adbe.pkcs` seal all change (observed in the sandbox
+test on 2026-10-09, for the combined PDF with and without the certificate, the single
+document and the certificate alone). A copy downloaded from DocuSign later therefore
+never matches `documentHash`.
+
+So the proof covers the exact bytes the webhook captured, and those bytes are the
+document of record. No normalised or "content" hash is used: normalisation would widen
+what counts as the same document and make the verifier depend on PDF parsing. Signers
+get the archived PDF and bundle from a signer link, `/d/<token>`:
+
+- the token is 256 random bits; storage indexes it by `SHA-256(token)` and the record
+  must still hold the same token, so reissuing a link revokes the old one;
+- link responses are `no-store` and `noindex`, rate-limited, and expose only the
+  document summary (never the token or other operator fields);
+- the webhook issues a link for every captured envelope; operators can issue or
+  reissue one for any record (`POST /api/documents/:id/share`, "Signer link" in the
+  archive). Delivering the link to signers is not automated yet.
+
+Before anchoring, the webhook reads the envelope's status from DocuSign's API and
+refuses anything that is not `completed`, rather than trusting the webhook body.
 
 Legacy `pqva/1` bundles (sorted-pair Merkle tree without prefixes, `docusignSigners`,
 `docusignKeyRegistrationTxnId`) are still accepted by the verifiers. Their signers are

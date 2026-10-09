@@ -278,3 +278,36 @@ test('a top-level __proto__ key is rejected by the schema check', async () => {
   assert.equal(r.valid, false);
   assert.match(r.steps[0].detail, /__proto__/);
 });
+
+test('signed DocuSign capture provenance verifies and is returned', async () => {
+  const capture = {
+    source: 'docusign-envelope-combined' as const,
+    envelopeCompletedAt: '2026-10-09T08:23:02.580Z',
+    capturedAt: '2026-10-09T08:23:30.000Z',
+  };
+  const bundle = makeBundle({ capture, signerSource: 'docusign-connect' });
+  chain[ANCHOR_TXN] = anchorTxn(bundle);
+  const r = await verifyBundle(bundle, PDF, opts);
+  assert.equal(r.valid, true, JSON.stringify(r.steps));
+  assert.deepEqual(r.capture, capture);
+});
+
+test('capture provenance is covered by the signature and schema-checked', async () => {
+  const capture = {
+    source: 'docusign-envelope-combined' as const,
+    envelopeCompletedAt: '2026-10-09T08:23:02.580Z',
+    capturedAt: '2026-10-09T08:23:30.000Z',
+  };
+  const bundle = makeBundle({ capture });
+  chain[ANCHOR_TXN] = anchorTxn(bundle);
+
+  const backdated = { ...bundle, capture: { ...capture, envelopeCompletedAt: '2020-01-01T00:00:00.000Z' } };
+  const r1 = await verifyBundle(backdated, PDF, opts);
+  assert.equal(r1.valid, false);
+  assert.equal(step(r1, 'ML-DSA-65 Signature').passed, false);
+
+  const malformed = { ...bundle, capture: { source: 'elsewhere', envelopeCompletedAt: 'yesterday' } };
+  const r2 = await verifyBundle(malformed, PDF, opts);
+  assert.equal(r2.valid, false);
+  assert.match(r2.steps[0].detail, /capture/);
+});

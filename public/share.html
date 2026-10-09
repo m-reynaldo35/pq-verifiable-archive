@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta name="robots" content="noindex, nofollow" />
+<title>Signed document · PQ Verifiable Archive</title>
+<style>
+  :root {
+    --bg: #0f0f0f;
+    --panel: #161616;
+    --panel-2: #1c1c1c;
+    --border: #2a2a2a;
+    --text: #e6e6e6;
+    --muted: #8a8a8a;
+    --green: #36d399;
+    --red: #f87272;
+    --blue: #5aa9ff;
+    --grey: #6b6b6b;
+    --amber: #f5c451;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", Helvetica, Arial, sans-serif;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    line-height: 1.6;
+    padding: 48px 20px;
+  }
+  .wrap { max-width: 980px; margin: 0 auto; }
+  header { margin-bottom: 28px; }
+  h1 {
+    font-size: 28px;
+    margin: 0 0 6px;
+    letter-spacing: -0.5px;
+  }
+  .tagline { color: var(--muted); font-size: 14px; margin: 0; }
+
+  .step {
+    display: flex;
+    align-items: flex-start;
+    gap: 14px;
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 14px 16px;
+    margin-bottom: 8px;
+  }
+  .step.info { opacity: 0.85; }
+  .icon {
+    flex: 0 0 22px;
+    width: 22px; height: 22px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    font-size: 13px;
+    font-weight: 700;
+    margin-top: 1px;
+  }
+  .icon.pass { background: rgba(54,211,153,0.15); color: var(--green); }
+  .icon.fail { background: rgba(248,114,114,0.15); color: var(--red); }
+  .icon.info { background: rgba(107,107,107,0.2); color: var(--grey); }
+  .icon.skip { background: rgba(245,196,81,0.15); color: var(--amber); }
+  .icon.error { background: rgba(245,196,81,0.18); color: var(--amber); }
+  .icon.running { background: rgba(90,169,255,0.15); }
+  .step .body { flex: 1; min-width: 0; }
+  .step .name { font-size: 14px; font-weight: 600; }
+  .step .subname { font-size: 12px; color: var(--muted); margin-top: 1px; }
+  .step.skip .detail { color: var(--amber); }
+  .step .name .tag {
+    font-size: 10px;
+    color: var(--grey);
+    border: 1px solid var(--grey);
+    border-radius: 3px;
+    padding: 1px 5px;
+    margin-left: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    vertical-align: middle;
+  }
+  .step .detail { font-size: 12.5px; color: var(--muted); word-break: break-all; margin-top: 2px; font-family: var(--mono); }
+  .step .detail a { color: var(--blue); text-decoration: none; }
+  .step .detail a:hover { text-decoration: underline; }
+  .step .spinner { width: 16px; height: 16px; }
+  .signer {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px 16px;
+    margin-bottom: 8px;
+    font-size: 13px;
+  }
+  .signer .sname { font-weight: 600; }
+  .signer .smeta { color: var(--muted); font-size: 12px; }
+  .banner {
+    margin-top: 32px;
+    border-radius: 8px;
+    padding: 24px;
+    text-align: center;
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: 1px;
+  }
+  .banner.valid { background: rgba(54,211,153,0.12); border: 1px solid var(--green); color: var(--green); }
+  .banner.invalid { background: rgba(248,114,114,0.12); border: 1px solid var(--red); color: var(--red); }
+  .banner.warn { background: rgba(245,196,81,0.12); border: 1px solid var(--amber); color: var(--amber); }
+  .banner .sub { display: block; font-size: 13px; font-weight: 400; color: var(--muted); margin-top: 8px; letter-spacing: 0; }
+  .card { background: var(--panel); border: 1px solid var(--border); border-radius: 10px; padding: 20px 22px; margin-bottom: 20px; }
+  .card h2 { font-size: 15px; margin: 0 0 12px; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 6px 18px; margin: 0; font-size: 13.5px; }
+  dt { color: var(--muted); }
+  dd { margin: 0; word-break: break-all; }
+  .mono { font-family: var(--mono); font-size: 12.5px; }
+  a { color: var(--blue); }
+  .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
+  .btn { background: var(--panel-2); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 9px 16px; font: 14px var(--sans); cursor: pointer; text-decoration: none; }
+  .btn.primary { background: var(--blue); border-color: var(--blue); color: #0b0b0b; font-weight: 600; }
+  .btn:disabled { opacity: 0.5; cursor: wait; }
+  .note { color: var(--muted); font-size: 13px; margin: 12px 0 0; }
+  .note code { font-family: var(--mono); font-size: 12px; }
+  #steps, #signers { margin-top: 14px; }
+  .hidden { display: none; }
+  @media (max-width: 560px) { dl { grid-template-columns: 1fr; } dt { margin-top: 6px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Your signed document</h1>
+    <p class="tagline">Archived copy with a post-quantum (ML-DSA-65) proof anchored on Algorand</p>
+  </header>
+
+  <div id="error" class="banner invalid hidden"></div>
+
+  <div id="doc" class="hidden">
+    <div class="card">
+      <h2 id="title"></h2>
+      <dl>
+        <dt>Envelope</dt><dd class="mono" id="envelope"></dd>
+        <dt>Completed</dt><dd id="completed"></dd>
+        <dt>Captured</dt><dd id="captured"></dd>
+        <dt>Anchored</dt><dd id="anchored"></dd>
+        <dt>SHA-256</dt><dd class="mono" id="hash"></dd>
+      </dl>
+      <div id="signers"></div>
+      <div class="actions">
+        <a class="btn" id="dlPdf" href="#">Download PDF</a>
+        <a class="btn" id="dlBundle" href="#">Download proof bundle</a>
+        <button class="btn primary" id="verifyBtn">Verify now</button>
+      </div>
+      <p class="note">
+        <strong>Keep this copy.</strong> It is the document of record: the proof covers these exact bytes.
+        DocuSign rebuilds its PDFs on every download (new timestamps and file ID), so a copy downloaded
+        from DocuSign later will have a different fingerprint and will not match the proof.
+      </p>
+    </div>
+
+    <div class="card hidden" id="resultCard">
+      <div id="banner"></div>
+      <div id="steps"></div>
+      <p class="note">
+        This check ran on the server. To verify without trusting this service, use the
+        <a href="/">in-browser verifier</a> (“Verify Independently”) with the two downloads above, or the open-source CLI:
+        <code>npx tsx verifier/verify.ts --bundle bundle.json --pdf document.pdf</code>
+      </p>
+    </div>
+  </div>
+</div>
+<script src="/app.js"></script>
+<script>
+(function () {
+  'use strict';
+  const token = decodeURIComponent(location.pathname.split('/').pop() || '');
+  const api = '/api/shared/' + encodeURIComponent(token);
+  const $ = id => document.getElementById(id);
+  const fmt = iso => iso ? new Date(iso).toLocaleString() : '—';
+
+  function fail(msg) {
+    $('error').innerHTML = esc(msg);
+    $('error').classList.remove('hidden');
+  }
+
+  fetch(api).then(async res => {
+    if (!res.ok) {
+      fail(res.status === 404 ? 'This link is invalid or has been revoked.' : 'Could not load the document — try again later.');
+      return;
+    }
+    const d = await res.json();
+    $('title').textContent = d.filename;
+    $('envelope').textContent = d.envelopeId;
+    $('completed').textContent = d.capture ? fmt(d.capture.envelopeCompletedAt) + ' (DocuSign)' : '—';
+    $('captured').textContent = d.capture ? fmt(d.capture.capturedAt) : fmt(d.archivedAt);
+    $('anchored').innerHTML = '<a href="' + EXPLORER_TX_BASE + esc(d.txId) + '" target="_blank" rel="noopener">' +
+      esc(d.txId.slice(0, 12)) + '…</a> · round ' + esc(d.round) + (d.blockTimestamp ? ' · ' + esc(fmt(d.blockTimestamp)) : '');
+    $('hash').textContent = d.documentHash;
+    renderSigners(d.signers || [], $('signers'));
+    $('dlPdf').href = api + '/pdf';
+    $('dlBundle').href = api + '/bundle';
+    $('doc').classList.remove('hidden');
+  }).catch(() => fail('Could not load the document — check your connection.'));
+
+  $('verifyBtn').addEventListener('click', async () => {
+    const btn = $('verifyBtn');
+    btn.disabled = true;
+    btn.textContent = 'Verifying…';
+    try {
+      const res = await fetch(api + '/verify', { method: 'POST' });
+      const result = await res.json();
+      renderBanner(result, $('banner'));
+      renderSteps(result.steps || [], $('steps'));
+      $('resultCard').classList.remove('hidden');
+    } catch {
+      fail('Verification request failed — try again.');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Verify now';
+    }
+  });
+})();
+</script>
+</body>
+</html>

@@ -7,6 +7,7 @@ import {
   ProofBundle,
   Signer,
   SignerSource,
+  DocumentCapture,
 } from './bundleSigner.js';
 import { envelopeIdsDigest } from './algorandAnchor.js';
 import { findStateProofForRound } from './stateProofCollector.js';
@@ -44,6 +45,8 @@ export interface VerifyResult {
   // signers were typed by whoever requested the anchor and are not verified.
   signers: Signer[];
   signerSource: SignerSource;
+  // Signed provenance of the archived document, when the bundle has one.
+  capture?: DocumentCapture;
   // False when no document was supplied, so only the bundle was verified.
   documentChecked: boolean;
   // Anchoring time from the ledger (not from the bundle), when available.
@@ -98,8 +101,14 @@ function validateBundleSchema(b: unknown): string[] {
     if (typeof b.keyRegistrationTxnId !== 'string') problems.push('keyRegistrationTxnId');
     if (!Array.isArray(b.signers)) problems.push('signers');
     if (b.signerSource !== 'docusign-connect' && b.signerSource !== 'requester-asserted') problems.push('signerSource');
+    if (b.capture !== undefined && !isCapture(b.capture)) problems.push('capture');
   }
   return problems;
+}
+
+function isCapture(c: unknown): boolean {
+  const isTime = (v: unknown) => typeof v === 'string' && !Number.isNaN(Date.parse(v));
+  return isObject(c) && c.source === 'docusign-envelope-combined' && isTime(c.envelopeCompletedAt) && isTime(c.capturedAt);
 }
 
 function bundleSigners(b: ProofBundle): { signers: Signer[]; signerSource: SignerSource } {
@@ -375,6 +384,7 @@ export async function verifyBundle(
     steps,
     signers,
     signerSource,
+    ...(bundle.protocol === 'pqva/2' && bundle.capture ? { capture: bundle.capture } : {}),
     documentChecked: Boolean(pdfBuffer),
     ...(anchoredAt ? { anchoredAt } : {}),
     operationalError,

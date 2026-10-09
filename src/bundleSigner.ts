@@ -19,6 +19,18 @@ export interface Signer {
 // is whatever the requester typed and is NOT verified by the issuer.
 export type SignerSource = 'docusign-connect' | 'requester-asserted';
 
+// Where the archived document came from. documentHash covers the exact bytes
+// the issuer captured. DocuSign regenerates PDF metadata, the PDF /ID and its
+// own seal on every download, so a later download from DocuSign never matches:
+// the archived copy is the document of record.
+export interface DocumentCapture {
+  source: 'docusign-envelope-combined';
+  // Envelope completion time as reported by DocuSign's envelope API.
+  envelopeCompletedAt: string;
+  // When the issuer downloaded the completed document from DocuSign.
+  capturedAt: string;
+}
+
 export interface ProofBundleV2 {
   protocol: 'pqva/2';
   envelopeId: string;
@@ -38,6 +50,7 @@ export interface ProofBundleV2 {
   keyRegistrationTxnId: string;
   signers: Signer[];
   signerSource: SignerSource;
+  capture?: DocumentCapture;
   algorithm: 'ml-dsa-65';
   mldsaPublicKey: string;
   signature: string;
