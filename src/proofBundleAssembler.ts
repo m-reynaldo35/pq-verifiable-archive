@@ -7,6 +7,7 @@ import {
   ProofBundleV2,
   Signer,
   SignerSource,
+  DocumentCapture,
 } from './bundleSigner.js';
 
 export interface CreateBundleParams {
@@ -14,6 +15,7 @@ export interface CreateBundleParams {
   envelopeId: string;
   signers: Signer[];
   signerSource: SignerSource;
+  capture?: DocumentCapture;
 }
 
 // The single path every entry point (REST, archive upload, webhook, MCP) uses
@@ -47,6 +49,7 @@ export async function createProofBundle(params: CreateBundleParams): Promise<Pro
     keyRegistrationTxnId,
     signers: params.signers,
     signerSource: params.signerSource,
+    ...(params.capture ? { capture: params.capture } : {}),
     algorithm: 'ml-dsa-65',
   });
 }

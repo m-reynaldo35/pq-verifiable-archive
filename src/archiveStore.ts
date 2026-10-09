@@ -1,8 +1,8 @@
 import { readFile } from 'fs/promises';
-import { randomUUID } from 'node:crypto';
+import { randomUUID, randomBytes, createHash } from 'node:crypto';
 import path from 'node:path';
 import { getStorage } from './storage.js';
-import type { ProofBundle, Signer, SignerSource } from './bundleSigner.js';
+import type { DocumentCapture, ProofBundle, Signer, SignerSource } from './bundleSigner.js';
 
 export interface ArchiveRecord {
   id: string;
@@ -18,15 +18,37 @@ export interface ArchiveRecord {
   blockTimestamp?: string;
   stateProofRound: number;
   archivedAt: string;
+  capture?: DocumentCapture;
+  // Secret for the signer link (/d/<token>). Operator-only: records are never
+  // served to link holders, only the SharedDocument summary below.
+  shareToken?: string;
+}
+
+// What a signer link exposes: enough to identify and verify the document,
+// never the share token or other operator fields.
+export interface SharedDocument {
+  title: string;
+  filename: string;
+  envelopeId: string;
+  documentHash: string;
+  signers: Signer[];
+  signerSource: SignerSource;
+  txId: string;
+  round: number;
+  blockTimestamp?: string;
+  archivedAt: string;
+  capture?: DocumentCapture;
 }
 
 // Storage layout (Vercel Blob or PQVA_ARCHIVE_DIR):
 //   records/<id>.json   archive record
 //   bundles/<id>.json   proof bundle
 //   pdfs/<id>.pdf       archived document
+//   shares/<sha256>.json signer link index: SHA-256(token) -> record id
 const recordKey = (id: string) => `records/${id}.json`;
 const bundleKey = (id: string) => `bundles/${id}.json`;
 const pdfKey = (id: string) => `pdfs/${id}.pdf`;
+const shareKey = (token: string) => `shares/${createHash('sha256').update(token).digest('hex')}.json`;
 
 // Newest records first (ids sort that way), fetched in full, so keep this modest.
 const MAX_LISTED_RECORDS = 200;
@@ -126,4 +148,62 @@ export async function saveRecord(record: ArchiveRecord, bundleJson: string, pdfB
 
 export function storageKind(): string {
   return getStorage().kind;
+}
+
+// ---------------------------------------------------------------------------
+// Signer links. The archived copy is the document of record (DocuSign
+// regenerates its PDFs on every download), so signers get it from here.
+// A link is a 256-bit random token; the index is keyed by its hash, and the
+// record must still hold the same token, so rotating a link revokes the old
+// one even if deleting its index entry failed.
+// ---------------------------------------------------------------------------
+const SHARE_TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
+
+export function newShareToken(): string {
+  return randomBytes(32).toString('base64url');
+}
+
+// Point `token` at the record. Call after the record (holding the token) is saved.
+export async function indexShareToken(recordId: string, token: string): Promise<void> {
+  await getStorage().put(shareKey(token), JSON.stringify({ recordId }), 'application/json');
+}
+
+// Issue a fresh link for a record, revoking any previous one.
+export async function rotateShareToken(recordId: string): Promise<string | undefined> {
+  if (recordId === SAMPLE_ID) return undefined;
+  const record = await getRecord(recordId);
+  if (!record) return undefined;
+  const previous = record.shareToken;
+  const token = newShareToken();
+  const storage = getStorage();
+  await storage.put(recordKey(record.id), JSON.stringify({ ...record, shareToken: token }, null, 2), 'application/json');
+  await indexShareToken(record.id, token);
+  if (previous && SHARE_TOKEN_RE.test(previous)) await storage.release(shareKey(previous)).catch(() => undefined);
+  return token;
+}
+
+export async function resolveShareToken(token: string): Promise<ArchiveRecord | undefined> {
+  if (!SHARE_TOKEN_RE.test(token)) return undefined;
+  const raw = await getStorage().get(shareKey(token));
+  if (!raw) return undefined;
+  const { recordId } = JSON.parse(raw.toString('utf8')) as { recordId?: unknown };
+  if (typeof recordId !== 'string') return undefined;
+  const record = await getRecord(recordId);
+  return record?.shareToken === token ? record : undefined;
+}
+
+export function sharedView(r: ArchiveRecord): SharedDocument {
+  return {
+    title: r.title,
+    filename: r.filename,
+    envelopeId: r.envelopeId,
+    documentHash: r.documentHash,
+    signers: r.signers,
+    signerSource: r.signerSource,
+    txId: r.txId,
+    round: r.round,
+    ...(r.blockTimestamp ? { blockTimestamp: r.blockTimestamp } : {}),
+    archivedAt: r.archivedAt,
+    ...(r.capture ? { capture: r.capture } : {}),
+  };
 }

@@ -25,6 +25,9 @@ import {
   readBundle,
   readPdf,
   storageKind,
+  rotateShareToken,
+  resolveShareToken,
+  sharedView,
   ArchiveRecord,
 } from './archiveStore.js';
 
@@ -289,13 +292,13 @@ app.get('/api/documents', verifyLimiter, requireApiKey, async (_req, res) => {
 
 async function sendArchived(
   res: express.Response,
-  id: string,
+  load: () => Promise<ArchiveRecord | undefined>,
   read: (id: string) => Promise<Buffer | null>,
   filename: (r: ArchiveRecord) => string,
   contentType: string,
 ): Promise<void> {
   try {
-    const record = await getRecord(id);
+    const record = await load();
     const data = record ? await read(record.id) : null;
     if (!record || !data) {
       res.status(404).json({ error: 'document not found' });
@@ -309,20 +312,24 @@ async function sendArchived(
 }
 
 app.get('/api/documents/:id/bundle', requireApiKey, (req, res) =>
-  sendArchived(res, String(req.params.id), readBundle, r => `${r.title}-bundle.json`, 'application/json'),
+  sendArchived(res, () => getRecord(String(req.params.id)), readBundle, r => `${r.title}-bundle.json`, 'application/json'),
 );
 
 app.get('/api/documents/:id/pdf', requireApiKey, (req, res) =>
-  sendArchived(res, String(req.params.id), readPdf, r => r.filename, 'application/pdf'),
+  sendArchived(res, () => getRecord(String(req.params.id)), readPdf, r => r.filename, 'application/pdf'),
 );
 
-app.post('/api/documents/:id/verify', verifyLimiter, requireApiKey, upload.single('pdf'), async (req, res) => {
+async function verifyArchived(
+  res: express.Response,
+  load: () => Promise<ArchiveRecord | undefined>,
+  uploaded?: Buffer,
+): Promise<void> {
   let bundle: unknown;
   let pdfBuffer: Buffer | null = null;
   try {
-    const record = await getRecord(String(req.params.id));
+    const record = await load();
     const bundleBytes = record ? await readBundle(record.id) : null;
-    pdfBuffer = req.file ? req.file.buffer : record ? await readPdf(record.id) : null;
+    pdfBuffer = uploaded ?? (record ? await readPdf(record.id) : null);
     if (!record || !bundleBytes || !pdfBuffer) {
       res.status(404).json({ valid: false, steps: [], signers: [], error: 'document not found' });
       return;
@@ -340,7 +347,64 @@ app.post('/api/documents/:id/verify', verifyLimiter, requireApiKey, upload.singl
     console.error(`verify failed: ${(e as Error).message}`);
     res.status(500).json({ valid: false, steps: [], signers: [], error: 'verification failed due to an internal error' });
   }
+}
+
+app.post('/api/documents/:id/verify', verifyLimiter, requireApiKey, upload.single('pdf'), (req, res) =>
+  verifyArchived(res, () => getRecord(String(req.params.id)), req.file?.buffer),
+);
+
+// Issue (or reissue, revoking the old one) the signer link for a record.
+app.post('/api/documents/:id/share', archiveLimiter, requireApiKey, async (req, res) => {
+  try {
+    const token = await rotateShareToken(String(req.params.id));
+    if (!token) {
+      res.status(404).json({ error: 'document not found' });
+      return;
+    }
+    res.json({ path: `/d/${token}` });
+  } catch (e) {
+    console.error(`share link failed: ${(e as Error).message}`);
+    res.status(500).json({ error: 'could not create signer link' });
+  }
 });
+
+// ---------------------------------------------------------------------------
+// Signer links: the token in the URL is the only credential. Responses are
+// never cached or indexed, and expose the SharedDocument summary only.
+// ---------------------------------------------------------------------------
+function noStore(_req: express.Request, res: express.Response, next: express.NextFunction): void {
+  res.setHeader('Cache-Control', 'no-store');
+  res.setHeader('X-Robots-Tag', 'noindex, nofollow');
+  next();
+}
+const shared = [verifyLimiter, noStore];
+const sharedRecord = (req: express.Request) => () => resolveShareToken(String(req.params.token));
+
+app.get('/d/:token', shared, (_req, res) => res.sendFile(path.join(process.cwd(), 'public', 'share.html')));
+
+app.get('/api/shared/:token', shared, async (req, res) => {
+  try {
+    const record = await sharedRecord(req)();
+    if (!record) {
+      res.status(404).json({ error: 'link not found or revoked' });
+      return;
+    }
+    res.json(sharedView(record));
+  } catch (e) {
+    console.error(`shared lookup failed: ${(e as Error).message}`);
+    res.status(500).json({ error: 'could not load document' });
+  }
+});
+
+app.get('/api/shared/:token/bundle', shared, (req, res) =>
+  sendArchived(res, sharedRecord(req), readBundle, r => `${r.title}-bundle.json`, 'application/json'),
+);
+
+app.get('/api/shared/:token/pdf', shared, (req, res) =>
+  sendArchived(res, sharedRecord(req), readPdf, r => r.filename, 'application/pdf'),
+);
+
+app.post('/api/shared/:token/verify', shared, (req, res) => verifyArchived(res, sharedRecord(req)));
 
 // POST /api/anchor — agent-friendly JSON endpoint for hash anchoring.
 // Accepts { hash, envelope_id?, signers? }, returns a proof bundle.

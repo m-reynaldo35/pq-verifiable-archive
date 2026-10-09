@@ -2,11 +2,18 @@ import { Router, Request, Response } from 'express';
 import { createHmac, timingSafeEqual } from 'crypto';
 import { hashDocument } from './documentHasher.js';
 import { createProofBundle } from './proofBundleAssembler.js';
-import { downloadEnvelopePdf, getSignerMetadata } from './docusignClient.js';
-import { saveRecord, newRecordId, webhookCanonicalId, ArchiveRecord } from './archiveStore.js';
+import { downloadEnvelopePdf, getSignerMetadata, getEnvelopeCompletion } from './docusignClient.js';
+import {
+  saveRecord,
+  newRecordId,
+  webhookCanonicalId,
+  newShareToken,
+  indexShareToken,
+  ArchiveRecord,
+} from './archiveStore.js';
 import { tryClaim, setClaim, releaseClaim } from './claims.js';
 import { isProduction } from './config.js';
-import type { Signer } from './bundleSigner.js';
+import type { DocumentCapture, Signer } from './bundleSigner.js';
 
 // DocuSign sends one header per active HMAC key (X-DocuSign-Signature-1, -2, …)
 // so keys can be rotated; a request is authentic if any of them matches.
@@ -73,14 +80,26 @@ const STALE_MS = 3 * 60 * 1000;
 async function processEnvelope(envelopeId: string, canonicalId: string, testPdfBase64?: string): Promise<void> {
   let pdfBuffer: Buffer;
   let signers: Signer[] = [];
+  let capture: DocumentCapture | undefined;
 
   if (testPdfBase64 && testPdfAllowed()) {
     pdfBuffer = Buffer.from(testPdfBase64, 'base64');
   } else {
+    // Trust DocuSign's envelope status, not the webhook body's, before
+    // anchoring anything.
+    const completion = await getEnvelopeCompletion(envelopeId);
+    if (completion.status !== 'completed' || !completion.completedAt) {
+      throw new Error(`envelope status is ${completion.status}, not completed`);
+    }
     [pdfBuffer, signers] = await Promise.all([
       downloadEnvelopePdf(envelopeId),
       getSignerMetadata(envelopeId),
     ]);
+    capture = {
+      source: 'docusign-envelope-combined',
+      envelopeCompletedAt: new Date(completion.completedAt).toISOString(),
+      capturedAt: new Date().toISOString(),
+    };
   }
 
   const documentHash = hashDocument(pdfBuffer);
@@ -89,6 +108,7 @@ async function processEnvelope(envelopeId: string, canonicalId: string, testPdfB
     envelopeId,
     signers,
     signerSource: 'docusign-connect',
+    ...(capture ? { capture } : {}),
   });
 
   const record: ArchiveRecord = {
@@ -104,8 +124,15 @@ async function processEnvelope(envelopeId: string, canonicalId: string, testPdfB
     blockTimestamp: bundle.blockTimestamp,
     stateProofRound: bundle.stateProofRound,
     archivedAt: new Date().toISOString(),
+    ...(capture ? { capture } : {}),
+    shareToken: newShareToken(),
   };
   await saveRecord(record, JSON.stringify(bundle, null, 2), pdfBuffer);
+  // The document is archived and anchored at this point; a failed link index
+  // must not make DocuSign retry (and anchor twice). The operator can reissue it.
+  await indexShareToken(record.id, record.shareToken as string).catch(e =>
+    process.stderr.write(`[webhook] could not index signer link for ${record.id}: ${(e as Error).message}\n`),
+  );
 }
 
 export const webhookRouter = Router();

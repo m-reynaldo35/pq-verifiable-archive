@@ -171,3 +171,20 @@ export async function getSignerMetadata(envelopeId: string): Promise<SignerMetad
       signedAt: signer.signedDateTime as string,
     }));
 }
+
+// The envelope's own status and completion time, read from DocuSign rather
+// than taken from the webhook body.
+export async function getEnvelopeCompletion(envelopeId: string): Promise<{ status: string; completedAt?: string }> {
+  const accountId = requireEnv('DOCUSIGN_ACCOUNT_ID');
+  const url = `${await apiBaseUrl()}/v2.1/accounts/${accountId}/envelopes/${envelopeId}`;
+  const res = await fetch(url, {
+    headers: { ...(await authHeaders()), Accept: 'application/json' },
+  });
+
+  if (!res.ok) {
+    throw new Error(`Failed to fetch envelope ${envelopeId}: ${res.status} ${res.statusText}`);
+  }
+
+  const body = (await res.json()) as { status?: string; completedDateTime?: string };
+  return { status: body.status ?? 'unknown', completedAt: body.completedDateTime };
+}
