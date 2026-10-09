@@ -231,7 +231,8 @@ VALID — document integrity proven as of 2026-06-11T09:00:00Z
 - [x] Webhook confirms `completed` status via the envelope API before anchoring
 - [x] Signer links `/d/<token>`: download PDF + bundle, server-side verify, pointers to the independent verifiers
 - [ ] Deliver signer links automatically (email provider, or a follow-up DocuSign envelope)
-- [ ] Show `capture` provenance in the in-browser and CLI verifiers
+- [x] Live sandbox test 2 (envelope `72e32fed…`, 2026-10-09): anchored 24 s after completion; signer link, Verify now, tampered PDF and backdated capture all behaved as expected
+- [x] Show `capture` provenance in the in-browser and CLI verifiers (only once the issuer signature checks out); in-browser schema check now matches the server's
 
 ---
 

@@ -4,6 +4,7 @@
 import { readFile } from 'fs/promises';
 import { Command } from 'commander';
 import { verifyBundle } from '../src/verifyBundle.js';
+import { describeCapture } from '../src/captureSummary.js';
 import { DEFAULT_INDEXER_URL, HOSTED_ISSUERS, TrustAnchor } from '../src/config.js';
 
 const EXIT_VALID = 0;
@@ -94,6 +95,14 @@ async function main() {
         : '\nSigners (asserted by the requester, NOT verified):',
     );
     for (const s of result.signers) console.log(`  ${s.name} <${s.email}> — signed ${s.signedAt}`);
+  }
+
+  // Only shown when the issuer's signature checked out: an unsigned or forged
+  // capture record says nothing.
+  const signatureOk = result.steps.some(s => s.name === 'ML-DSA-65 Signature' && s.passed);
+  if (result.capture && signatureOk) {
+    console.log('\nDocument capture (signed by the issuer; times reported by DocuSign and the issuer):');
+    for (const line of describeCapture(result.capture, result.anchoredAt)) console.log(`  ${line}`);
   }
 
   if (result.valid) {

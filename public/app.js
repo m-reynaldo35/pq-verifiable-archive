@@ -94,3 +94,37 @@ function renderSigners(signers, container) {
     container.appendChild(el);
   }
 }
+
+// Signed gap between two ISO times; mirrors src/captureSummary.ts.
+function formatCaptureGap(fromIso, toIso) {
+  const ms = Date.parse(toIso) - Date.parse(fromIso);
+  if (!Number.isFinite(ms)) return 'gap unknown';
+  const s = Math.round(Math.abs(ms) / 1000);
+  const span = s < 120 ? s + ' s' : s < 7200 ? Math.round(s / 60) + ' min' : Math.round(s / 3600) + ' h';
+  return ms >= 0 ? '+' + span + ' after completion' : span + ' BEFORE completion';
+}
+
+// The bundle's signed capture record. Hidden unless the issuer's signature
+// checked out, since an unsigned or forged record says nothing.
+function renderCapture(result, container) {
+  const c = result.capture;
+  const signatureOk = (result.steps || []).some(s => s.name === 'ML-DSA-65 Signature' && s.passed);
+  if (!c || !signatureOk) {
+    container.style.display = 'none';
+    container.innerHTML = '';
+    return;
+  }
+  const row = (label, value) =>
+    '<div class="smeta"><span class="clabel">' + esc(label) + '</span> ' + esc(value) + '</div>';
+  container.style.display = 'block';
+  container.innerHTML =
+    '<div class="section-title">Document capture</div>' +
+    '<div class="signer">' +
+      row('DocuSign reported completion:', c.envelopeCompletedAt) +
+      row('Issuer archived this copy:', c.capturedAt + ' (' + formatCaptureGap(c.envelopeCompletedAt, c.capturedAt) + ')') +
+      (result.anchoredAt ? row('Anchored on Algorand (ledger time):', result.anchoredAt) : '') +
+      '<div class="smeta cnote">Signed by the issuer. The first two times come from DocuSign and the issuer; ' +
+      'the ledger time is the independent one. A fresh download from DocuSign will not match this copy, ' +
+      'because DocuSign regenerates the PDF on every download.</div>' +
+    '</div>';
+}
