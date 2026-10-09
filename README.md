@@ -64,6 +64,8 @@ Two downloads of the same completed envelope have **different SHA-256 hashes**: 
 - **…Algorand?** About 0.001 ALGO per anchor (a fraction of a cent), ~3 s finality with no forks, and Falcon-based state proofs give a post-quantum path for the ledger history.
 
 ### Numbers from the live sandbox tests (2026-10-09)
+Full write-up of each run, with the checks, attacks and on-chain transactions: [docs/live-tests.md](docs/live-tests.md).
+
 | | |
 |---|---|
 | Envelope completed → anchored on mainnet | 24–26 s (two envelopes) |
