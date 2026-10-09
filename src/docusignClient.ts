@@ -188,3 +188,77 @@ export async function getEnvelopeCompletion(envelopeId: string): Promise<{ statu
   const body = (await res.json()) as { status?: string; completedDateTime?: string };
   return { status: body.status ?? 'unknown', completedAt: body.completedDateTime };
 }
+
+export interface EmbeddedSigner {
+  name: string;
+  email: string;
+  // Marks the recipient as embedded: DocuSign does not email them, and a
+  // signing session can only be opened through createRecipientView.
+  clientUserId: string;
+}
+
+// Send a one-signer envelope for embedded signing. The document is HTML, which
+// DocuSign renders to PDF; the signature goes on `anchor` text.
+export async function createEmbeddedEnvelope(opts: {
+  signer: EmbeddedSigner;
+  emailSubject: string;
+  documentName: string;
+  documentHtml: string;
+  anchor: string;
+}): Promise<string> {
+  const accountId = requireEnv('DOCUSIGN_ACCOUNT_ID');
+  const envelope = {
+    emailSubject: opts.emailSubject,
+    status: 'sent',
+    documents: [
+      {
+        documentId: '1',
+        name: opts.documentName,
+        fileExtension: 'html',
+        documentBase64: Buffer.from(opts.documentHtml, 'utf8').toString('base64'),
+      },
+    ],
+    recipients: {
+      signers: [
+        {
+          recipientId: '1',
+          routingOrder: '1',
+          ...opts.signer,
+          tabs: {
+            signHereTabs: [{ anchorString: opts.anchor, anchorUnits: 'pixels', anchorXOffset: '0', anchorYOffset: '-4' }],
+          },
+        },
+      ],
+    },
+  };
+  const res = await fetch(`${await apiBaseUrl()}/v2.1/accounts/${accountId}/envelopes`, {
+    method: 'POST',
+    headers: { ...(await authHeaders()), 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify(envelope),
+  });
+  if (!res.ok) throw new Error(`Failed to create envelope: ${res.status} ${res.statusText}`);
+  const body = (await res.json()) as { envelopeId?: string };
+  if (typeof body.envelopeId !== 'string') throw new Error('DocuSign returned no envelopeId');
+  return body.envelopeId;
+}
+
+// A short-lived, single-use URL that opens the embedded signing session.
+// DocuSign redirects to returnUrl afterwards, appending ?event=<outcome>.
+export async function createRecipientView(envelopeId: string, signer: EmbeddedSigner, returnUrl: string): Promise<string> {
+  const accountId = requireEnv('DOCUSIGN_ACCOUNT_ID');
+  const res = await fetch(`${await apiBaseUrl()}/v2.1/accounts/${accountId}/envelopes/${envelopeId}/views/recipient`, {
+    method: 'POST',
+    headers: { ...(await authHeaders()), 'Content-Type': 'application/json', Accept: 'application/json' },
+    body: JSON.stringify({
+      userName: signer.name,
+      email: signer.email,
+      clientUserId: signer.clientUserId,
+      authenticationMethod: 'none',
+      returnUrl,
+    }),
+  });
+  if (!res.ok) throw new Error(`Failed to create signing view for ${envelopeId}: ${res.status} ${res.statusText}`);
+  const body = (await res.json()) as { url?: string };
+  if (typeof body.url !== 'string' || !body.url.startsWith('https://')) throw new Error('DocuSign returned no signing URL');
+  return body.url;
+}

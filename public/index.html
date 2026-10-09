@@ -353,6 +353,7 @@
     <h1>PQ Verifiable Archive</h1>
     <p class="tagline">Post-quantum tamper evidence for signed documents</p>
     <p class="tagline" style="margin-top:6px; font-size:13px;">Contracts archived today must verify in 2040. Receipts here are signed with ML-DSA-65 (NIST FIPS-204) instead of RSA or ECDSA.</p>
+    <p class="tagline" style="margin-top:10px; font-size:14px;"><a href="/try" style="color: var(--blue);">New here? Sign a demo contract with DocuSign and verify the proof yourself →</a></p>
   </header>
 
   <div class="tabs">
@@ -549,6 +550,8 @@
     if (name === 'documents') loadDocuments();
   }
   tabs.forEach(t => t.addEventListener('click', () => switchTab(t.dataset.tab)));
+  // Deep link from /try and the README: /#verify opens the verifier.
+  if (location.hash === '#verify') switchTab('verify');
 
   function wireDrop(zone, onFile) {
     let depth = 0;

@@ -45,9 +45,11 @@ export interface SharedDocument {
 //   bundles/<id>.json   proof bundle
 //   pdfs/<id>.pdf       archived document
 //   shares/<sha256>.json signer link index: SHA-256(token) -> record id
+//   envelopes/<id>.json  DocuSign envelope (canonical id) -> record id
 const recordKey = (id: string) => `records/${id}.json`;
 const bundleKey = (id: string) => `bundles/${id}.json`;
 const pdfKey = (id: string) => `pdfs/${id}.pdf`;
+const envelopeKey = (canonicalId: string) => `envelopes/${canonicalId}.json`;
 const shareKey = (token: string) => `shares/${createHash('sha256').update(token).digest('hex')}.json`;
 
 // Newest records first (ids sort that way), fetched in full, so keep this modest.
@@ -206,4 +208,18 @@ export function sharedView(r: ArchiveRecord): SharedDocument {
     archivedAt: r.archivedAt,
     ...(r.capture ? { capture: r.capture } : {}),
   };
+}
+
+// Envelope -> record lookup, written by the webhook after archiving. Lets the
+// demo status page find the record for an envelope it created.
+export async function indexEnvelope(canonicalId: string, recordId: string): Promise<void> {
+  await getStorage().put(envelopeKey(canonicalId), JSON.stringify({ recordId }), 'application/json');
+}
+
+export async function recordIdForEnvelope(canonicalId: string): Promise<string | undefined> {
+  if (!ID_RE.test(canonicalId)) return undefined;
+  const raw = await getStorage().get(envelopeKey(canonicalId));
+  if (!raw) return undefined;
+  const { recordId } = JSON.parse(raw.toString('utf8')) as { recordId?: unknown };
+  return typeof recordId === 'string' ? recordId : undefined;
 }

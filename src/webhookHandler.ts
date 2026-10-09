@@ -9,6 +9,7 @@ import {
   webhookCanonicalId,
   newShareToken,
   indexShareToken,
+  indexEnvelope,
   ArchiveRecord,
 } from './archiveStore.js';
 import { tryClaim, setClaim, releaseClaim } from './claims.js';
@@ -130,9 +131,14 @@ async function processEnvelope(envelopeId: string, canonicalId: string, testPdfB
   await saveRecord(record, JSON.stringify(bundle, null, 2), pdfBuffer);
   // The document is archived and anchored at this point; a failed link index
   // must not make DocuSign retry (and anchor twice). The operator can reissue it.
-  await indexShareToken(record.id, record.shareToken as string).catch(e =>
-    process.stderr.write(`[webhook] could not index signer link for ${record.id}: ${(e as Error).message}\n`),
-  );
+  await Promise.all([
+    indexShareToken(record.id, record.shareToken as string).catch(e =>
+      process.stderr.write(`[webhook] could not index signer link for ${record.id}: ${(e as Error).message}\n`),
+    ),
+    indexEnvelope(canonicalId, record.id).catch(e =>
+      process.stderr.write(`[webhook] could not index envelope for ${record.id}: ${(e as Error).message}\n`),
+    ),
+  ]);
 }
 
 export const webhookRouter = Router();
