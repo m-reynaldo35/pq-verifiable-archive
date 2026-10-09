@@ -233,6 +233,7 @@ VALID — document integrity proven as of 2026-06-11T09:00:00Z
 - [ ] Deliver signer links automatically (email provider, or a follow-up DocuSign envelope)
 - [x] Public `/try` demo: embedded-signing envelope (no email sent, name only, placeholder address), status page that hands the visitor their signer link; free hash-only anchoring; both capped per UTC day across instances (`PQVA_DEMO_*`), off by default
 - [x] README: DocuSign section (flow, regeneration finding, what the proof does and does not show, why not RFC 3161, numbers, bring-your-own-sandbox guide)
+- [x] Live test 3 (2026-10-09): visitor signed through `/try` with embedded signing, anchored 23 s after completion; published as the public live example (`PQVA_SHOWCASE_LINK`); issuer wallet topped up to ~5.5 ALGO
 - [ ] Hosted "connect your own DocuSign account" (multi-tenant Connect + consent): build when a developer asks
 - [x] Live sandbox test 2 (envelope `72e32fed…`, 2026-10-09): anchored 24 s after completion; signer link, Verify now, tampered PDF and backdated capture all behaved as expected
 - [x] Show `capture` provenance in the in-browser and CLI verifiers (only once the issuer signature checks out); in-browser schema check now matches the server's
@@ -311,7 +312,7 @@ Single-page app: upload PDF + bundle → verify client-side → step-by-step res
 - [ ] Pass-through: agent's x402 payment header forwarded to the REST call
 
 ### 8.3 — Signer wallet top-up monitoring
-- [ ] Document minimum ALGO balance needed in signer wallet (e.g. 1 ALGO covers ~1000 anchors)
+- [x] Document minimum ALGO balance needed in signer wallet (e.g. 1 ALGO covers ~1000 anchors): README DocuSign numbers (0.001 ALGO per anchor)
 - [ ] Add startup warning if signer wallet balance below threshold
 
 **Acceptance:** Calling `anchor_document` without a valid x402 payment returns 402. With payment, anchor completes and USDC lands in treasury.
