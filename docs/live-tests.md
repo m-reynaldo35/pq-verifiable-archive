@@ -93,6 +93,33 @@ curl -s -F bundle=@bundle.json -F pdf=@document.pdf https://pq-verifiable-archiv
 npm run verify -- --bundle bundle.json --pdf document.pdf
 ```
 
+## Test 3: public `/try` demo, embedded signing (2026-10-09)
+
+The first run of the self-serve demo at https://pq-verifiable-archive.vercel.app/try, by a person in an ordinary browser: no DocuSign account, no email.
+
+| Step | Result |
+|---|---|
+| Visitor enters a name, clicks **Sign with DocuSign** | server creates an envelope for **embedded signing** (`clientUserId`, placeholder `@example.com` address) from a fixed HTML demo contract, and returns a single-use signing URL |
+| DocuSign | demo contract rendered with the visitor's name; *Sign here* placed on the anchor text; no email sent |
+| Signed, DocuSign redirects back to `/try` | page polls its session status (token kept in browser storage, never in a URL) |
+| Completed (DocuSign) | 14:17:16.437 UTC |
+| Connect delivery | same webhook as tests 1 and 2 |
+| Archived | 14:17:39.744 UTC (+23 s) |
+| Anchored | [`VSQLJMHAWDPMI66MWBXGJ5RFBA3VVPH5F7IMBU3CKMARCT223FUA`](https://explorer.perawallet.app/tx/VSQLJMHAWDPMI66MWBXGJ5RFBA3VVPH5F7IMBU3CKMARCT223FUA), round 65822403, ledger time 14:17:40 UTC |
+| Status page | switched to **Done** on its own and handed the visitor their signer link |
+
+| Check | Result |
+|---|---|
+| Downloaded PDF (4 pages: contract + certificate of completion) SHA-256 equals the bundle's `documentHash` (`8ac88dff…7680`) | ✅ |
+| Signers: `docusign-connect`, placeholder email (no real address in the public bundle) | ✅ |
+| **Verify now** (signature, hash, Merkle inclusion, anchor) | ✅ VALID |
+| PDF with one byte appended | ✅ INVALID (document hash) |
+| `capture.capturedAt` backdated | ✅ INVALID (signature) |
+
+Also checked on production before the run: bad names and malformed hashes rejected (400), unknown session tokens rejected (404), "continue signing" mints a fresh signing URL, and the free hash-only anchor ([`6A2UTYNT…NCWQ`](https://explorer.perawallet.app/tx/6A2UTYNTH5B3JMKBFFUWUZOK7TEHLLW7NCC52NHYSMEPJSRWNCWQ)) returns a bundle that verifies, and fails once the file changes.
+
+Found and fixed in this run: after signing, the name form stayed visible and the page did not show the link itself (PR #13).
+
 ## Check the anchors yourself
 
 Each anchor transaction's note is JSON: `{"protocol":"pqva/2","op":"anchor","merkleRoot":…,"envelopeCount":…,"envelopeIdsSha256":…}`. Envelope ids are hashed, never written in clear.
@@ -106,4 +133,4 @@ The sender must be the issuer address above. The verifier checks this, the round
 
 ## Live example
 
-Once the public `/try` demo is enabled, a showcase envelope signed through it is linked from https://pq-verifiable-archive.vercel.app/try. Its PDF and bundle can be downloaded and verified by anyone. It will be recorded here as test 3.
+A showcase envelope signed through `/try` is linked from https://pq-verifiable-archive.vercel.app/try ("Live example"). Its PDF and bundle can be downloaded and verified by anyone, in the browser or with the CLI.
