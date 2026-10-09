@@ -122,7 +122,7 @@
   .note { color: var(--muted); font-size: 13px; margin: 12px 0 0; }
   .note code { font-family: var(--mono); font-size: 12px; }
   #steps, #signers { margin-top: 14px; }
-  .hidden { display: none; }
+  .hidden { display: none !important; }
   .lead { font-size: 14px; color: var(--muted); margin: 0 0 14px; }
   ol.how { margin: 0 0 16px; padding-left: 20px; font-size: 13.5px; }
   ol.how li { margin-bottom: 4px; }
@@ -168,6 +168,10 @@
         <a class="btn primary hidden" id="openDoc" href="#">Open your signed document</a>
         <button class="btn hidden" id="resumeBtn">Continue signing</button>
         <button class="btn" id="resetBtn">Start over</button>
+      </div>
+      <div class="row hidden" id="linkRow" style="margin-top: 12px;">
+        <input type="text" id="linkOut" readonly aria-label="Your private link" />
+        <button class="btn" id="copyLink">Copy link</button>
       </div>
     </div>
     <div class="msg" id="signMsg"></div>
@@ -243,8 +247,10 @@
     setStep('stAnchor', 'pass', 'Proof bundle signed and anchored');
     $('openDoc').href = path;
     $('openDoc').classList.remove('hidden');
+    $('linkOut').value = location.origin + path;
+    $('linkRow').classList.remove('hidden');
     $('resumeBtn').classList.add('hidden');
-    msg($('signMsg'), 'Done. Bookmark your link: it is the only way back to your copy.', 'ok');
+    msg($('signMsg'), 'Done. Save this link: it is the only way back to your copy.', 'ok');
   }
   function poll(startedAt) {
     clearTimeout(pollTimer);
@@ -267,6 +273,7 @@
     $('progress').classList.add('hidden');
     $('startForm').classList.remove('hidden');
     $('openDoc').classList.add('hidden');
+    $('linkRow').classList.add('hidden');
     msg($('signMsg'), '');
   }
 
@@ -300,6 +307,16 @@
     }
   });
   $('resetBtn').addEventListener('click', reset);
+  $('copyLink').addEventListener('click', async () => {
+    $('linkOut').select();
+    try {
+      await navigator.clipboard.writeText($('linkOut').value);
+      $('copyLink').textContent = 'Copied';
+    } catch {
+      $('copyLink').textContent = 'Press Ctrl+C';
+    }
+    setTimeout(() => { $('copyLink').textContent = 'Copy link'; }, 2000);
+  });
 
   // DocuSign returns here with ?event=<outcome>; drop it from the address bar.
   const event = new URLSearchParams(location.search).get('event');
